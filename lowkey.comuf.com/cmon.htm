@@ -1,0 +1,57 @@
+<table border='1' cellpadding='2' bgcolor='#FFFFDF' bordercolor='#E8B900' align='center'><tr><td><font face='Arial' size='2' color='#000000'><b>This website was set to be removed for inactivity by <a href='http://www.000webhost.com/'>www.000webhost.com</a>. If you own this website, <a href='http://www.000webhost.com/protect-website'>click here</a> to protect it.</b></font></td></tr></table><br /><html><head><title>C'mon, the Compact MONitor</title><style type="text/css">code { background-color: #C0C0C0; font-weight: bold }</style></head><body>
+<h1>Source code</h1>
+<ul>
+<li><a href="CMONO16.ASM">Source code for the 65org16</a> (assemble with HXA)</li>
+<li><a href="STEP.ASM">Source code for the single step "plug-in"</a></li>
+<li><a href="HXA2DEV.SED">sed script to convert source code to dev65 syntax</a></li>
+</ul>
+<h1>Description</h1>
+<p>C'mon, the Compact monitor, is a very small monitor program for the 65org16. You must supply the following routines:</p>
+<ul>
+<li>INPUT, which waits for a character and returns it in the accumulator</li>
+<li>OUTPUT, which outputs the character in the accumulator</li>
+</ul>
+<p>Both routines should preserve the Y register and the D flag. OUTPUT should also preserve the accumulator. The OUTCR routine outputs a CR and an LF; modify it if your system uses a different sequence. The (case-insensitive) commands are:</p>
+<ul>
+<li><code>cr</code> output a CRLF (and a dash prompt)</li>
+<li><code>0-9A-F</code> accumulate hex digit</li>
+<li><code>,</code> store 16-bit "byte" at address, increment address</li>
+<li><code>@</code> set address</li>
+<li><code>G</code> go (call routine)</li>
+<li><code>X</code> hex/ASCII dump 128 16-bit "bytes"</li>
+</ul>
+<p>All other characters are ignored (thus you can use spaces freely). Leading zeros can be omitted. Note that commands execute immediately, i.e. you will get a memory dump when you press X not when you press Enter.</p>
+<p>Any routines you call with the G command should return with the D flag clear (they will be called with the D flag clear).</p>
+<h1>Examples</h1>
+<ul>
+<li><code>12345678 X</code> dump 128 bytes starting at address $12345678</li>
+<li><code>12345678 G</code> call the routine at address $12345678</li>
+<li><code>AAAAAAAA @ 1111,2222,3333,</code> store $1111, $2222, and $3333 at address $AAAAAAAA</li>
+</ul>
+<h1>Single step "plug-in"</h1>
+<p>To install the single step "plug-in" for C'mon, simply cut and paste the three sections of source code at the appropriate place in C'mon.</p>
+<p>To single step, use the @ command to set the address, then use the $ (single step) command to single step that instruction. Use $ again to single step the next instruction. After each single step, the program counter (of the next instruction) and the A, S, X, Y, P (in hex), and P (again, but in binary) registers will be output.</p>
+<p>If you set the break vector to BREAK, it will save the registers and set the address so that the next instruction (after the signature byte) can be single stepped.  Example:</p>
+<pre>
+    ORG $2000
+    CLC
+    LDA #$1234
+    ADC #$5678
+    BRK
+    .byte $0000 ; signature byte (its value is ignored)
+    EOR #$ABCD
+</pre>
+<p>2000G can be used to execute up to the ADC instruction.  A subsequent $ command will begin single stepping at the EOR instruction.</p>
+<p>Since it isn't always convenient to use BRK, it is also possible to use JSR BRKPT instead of BRK (and its signature byte).  Everything about the preceding example would be the same, except that the code would be:<pre>
+    ORG $2000
+    CLC
+    LDA #$1234
+    ADC #$5678
+    JSR BRKPT
+    EOR #$ABCD
+</pre>
+</body></html>
+
+<!-- Hosting24 Analytics Code -->
+<script type="text/javascript" src="http://stats.hosting24.com/count.php"></script>
+<!-- End Of Analytics Code -->

@@ -1,0 +1,598 @@
+<table border='1' cellpadding='2' bgcolor='#FFFFDF' bordercolor='#E8B900' align='center'><tr><td><font face='Arial' size='2' color='#000000'><b>This website was set to be removed for inactivity by <a href='http://www.000webhost.com/'>www.000webhost.com</a>. If you own this website, <a href='http://www.000webhost.com/protect-website'>click here</a> to protect it.</b></font></td></tr></table><br /><html><head><title>6502 software: Assembler</title><style type="text/css">pre { border: solid; padding: 1em }</style></head><body>
+<h1>Introduction</h1>
+<p>The One Page Assembler is an assembler that is only 256 bytes in size.
+Despite its size, the source code it assembles (as you can see from the
+various utilities here) is surprisingly readable.</p>
+<h1>How to use it</h1>
+<p>The characters used are:</p>
+<ul>
+<li>0-9A-Fa-f hex digit: number = number * 16 + digit</li>
+<li>' lookup "global" label (the "global" label consists of all characters
+above ASCII 31 up to the next apostrophe); if found, return its value; if
+not found, add it to the symbol table and set its value to address</li>
+<li>( start comment</li>
+<li>) end comment</li>
+<li>* set the "local" label value to address</li>
+<li>, store number at address, move high byte to low byte, increment
+address</li>
+<li>; store forward reference byte, move high byte to low byte</li>
+<li>&lt; store backward branch, increment address</li>
+<li>= get "local" label value</li>
+<li>&gt; store forward branch</li>
+<li>@ set address to number</li>
+<li>_ end of source code</li>
+</ul>
+<p>As with the "hex" file format, comments can be nested.</p>
+<p>While these characters are very similar to the characters in the "hex"
+file formats, there are some differences.  First, &lt; and &gt; do not look
+up the "local" label value (this is so they can also be used with "global"
+labels); use the sequences =&lt; and =&gt; for that.  Second, the number is
+never reset to 0, so use leading zeros for a 2 (for an 8-bit value) or 4
+(for a 16-bit value) character hex number.</p>
+<p>Initialize both the low and high bytes to LABELS with the address where
+the local labels will be stored.  As before, use only even "local" labels.
+Initialize SYMBUF with the address of a (up to 256 byte) buffer for "global"
+label names (used by the apostrophe to hold the "global" label name to look
+up).  SYMTBL is where the symbol table (i.e. the "global" label names and
+their values) is stored.  You must reassemble the assembler (it can assemble
+itself) to change the location where the symbol table is stored (or you can
+patch it, since it's only used in one place, but the point is it's not a
+parameter that's passed to the assembler).  Up to 255 "global" labels can be
+defined.</p>
+<h1>Source and object code</h1>
+<pre>
+                    [ 10 @ 'BPL'                                             ]
+                    [ 20 @ 'JSR'                                             ]
+                    [ 30 @ 'BMI'                                             ]
+                    [ 60 @ 'RTS'                                             ]
+                    [ 90 @ 'BCC'                                             ]
+                    [ A0 @ 'LDY #'                                           ]
+                    [ B0 @ 'BCS'                                             ]
+                    [ D0 @ 'BNE'                                             ]
+                    [ F0 @ 'BEQ'                                             ]
+                    [ 51 @ 'EOR ),Y'                                         ]
+                    [ 81 @ 'STA ,X)'                                         ]
+                    [ 91 @ 'STA ),Y'                                         ]
+                    [ B1 @ 'LDA ),Y'                                         ]
+                    [ A2 @ 'LDX #'                                           ]
+                    [ 84 @ 'STY'                                             ]
+                    [ A4 @ 'LDY'                                             ]
+                    [ 05 @ 'ORA'                                             ]
+                    [ 65 @ 'ADC'                                             ]
+                    [ 85 @ 'STA'                                             ]
+                    [ A5 @ 'LDA'                                             ]
+                    [ E5 @ 'SBC'                                             ]
+                    [ 06 @ 'ASL'                                             ]
+                    [ 26 @ 'ROL'                                             ]
+                    [ A6 @ 'LDX'                                             ]
+                    [ E6 @ 'INC'                                             ]
+                    [ 18 @ 'CLC'                                             ]
+                    [ 38 @ 'SEC'                                             ]
+                    [ 98 @ 'TYA'                                             ]
+                    [ A8 @ 'TAY'                                             ]
+                    [ C8 @ 'INY'                                             ]
+                    [ D8 @ 'CLD'                                             ]
+                    [ E8 @ 'INX'                                             ]
+                    [ 09 @ 'ORA #'                                           ]
+                    [ 29 @ 'AND #'                                           ]
+                    [ 49 @ 'EOR #'                                           ]
+                    [ 69 @ 'ADC #'                                           ]
+                    [ A9 @ 'LDA #'                                           ]
+                    [ C9 @ 'CMP #'                                           ]
+                    [ 8A @ 'TXA'                                             ]
+                    [ CA @ 'DEX'                                             ]
+                    [                                                        ]
+                    [ 0200 @ 'get'                                           ]
+                    [                                                        ]
+                    [ 0000 @ 'LABELS'                                        ]
+                    [ 0002 @ 'SYMBUF'                                        ]
+                    [ 0004 @ 'ADDRESS'                                       ]
+                    [   05 @ 'ADDRESS+1'                                     ]
+                    [ 0006 @ 'NUMBER'                                        ]
+                    [   07 @ 'NUMBER+1'                                      ]
+                    [ 0008 @ 'FWDREF'                                        ]
+                    [ 0009 @ 'NSYMBOLS'                                      ]
+                    [ 000A @ 'SYMPTR'                                        ]
+                    [   0B @ 'SYMPTR+1'                                      ]
+                    [                                                        ]
+                    [ 1200 @ 'SYMTBL'                                        ]
+                    [ 12   @ 'SYMTBL/256'                                    ]
+                    [                                                        ]
+                    [ 0FFA @                                                 ]
+                    [                                                        ]
+(10,04,            )[      'BPL',00*,                                        ]
+(30,02,            )[      'BMI',02*,                                        ]
+(00,01,            )[      (DW) 0100,, (RELDATA-PROGRAM)                     ]
+                    [ 00=&gt;02=&gt;                                               ]
+                    [ (PROGRAM)                                              ]
+(D8,               )[      'CLD',                                            ]
+(A9,00,            )[      'LDA #',00,                                       ]
+(85,09,            )[      'STA','NSYMBOLS',                                 ]
+(20,1F,10,         )[ 00*  'JSR',08*,,                                       ]
+(A2,00,            )[      'LDX #',00,                                       ]
+(8A,               )[      'TXA',                                            ]
+(C9,29,            )[ 02*  'CMP #',29,                                       ]
+(F0,01,            )[      'BEQ',06*,                                        ]
+(E8,               )[ 04*  'INX',                                            ]
+(20,00,02,         )[ 06=&gt; 'JSR','get',,                                     ]
+(C9,28,            )[      'CMP #',28,                                       ]
+(F0,F8,            )[      'BEQ',04=&lt;                                        ]
+(CA,               )[      'DEX',                                            ]
+(D0,F1,            )[      'BNE',02=&lt;                                        ]
+(C9,5F,            )[      'CMP #',5F,                                       ]
+(D0,E7,            )[      'BNE',00=&lt;                                        ]
+(60,               )[      'RTS',                                            ]
+                    [ 'relocate'                                             ]
+                    [ 08=;;                                                  ]
+(C9,3B,            )[      'CMP #',3B,                                       ]
+(D0,0F,            )[      'BNE',02*,                                        ]
+(A5,08,            )[      'LDA','FWDREF',                                   ]
+(81,06,            )[      'STA ,X)','NUMBER',                               ]
+(E6,06,            )[      'INC','NUMBER',                                   ]
+(D0,02,            )[      'BNE',00*,                                        ]
+(E6,07,            )[      'INC','NUMBER+1',                                 ]
+(A5,05,            )[ 00=&gt; 'LDA','ADDRESS+1',                                ]
+(85,08,            )[      'STA','FWDREF',                                   ]
+(60,               )[      'RTS',                                            ]
+                    [ 02=&gt;                                                   ]
+(C9,3E,            )[      'CMP #',3E,                                       ]
+(D0,08,            )[      'BNE',00*,                                        ]
+(18,               )[      'CLC',                                            ]
+(A5,04,            )[      'LDA','ADDRESS',                                  ]
+(E5,06,            )[      'SBC','NUMBER',                                   ]
+(81,06,            )[      'STA ,X)','NUMBER',                               ]
+(60,               )[      'RTS',                                            ]
+                    [ 00=&gt;                                                   ]
+(C9,27,            )[      'CMP #',27,                                       ]
+(D0,59,            )[      'BNE',0E*,                                        ]
+(A0,FF,            )[      'LDY #',FF,                                       ]
+(20,00,02,         )[ 00*  'JSR','get',,                                     ]
+(C9,20,            )[      'CMP #',20,                                       ]
+(90,F9,            )[      'BCC',00=&lt;                                        ]
+(C8,               )[      'INY',                                            ]
+(49,27,            )[      'EOR #',27,                                       ]
+(91,02,            )[      'STA ),Y','SYMBUF',                               ]
+(D0,F2,            )[      'BNE',00=&lt;                                        ]
+(A9,00,            )[      'LDA #','SYMTBL',                                 ]
+(85,0A,            )[      'STA','SYMPTR',                                   ]
+(A9,12,            )[      'LDA #','SYMTBL/256',                             ]
+(85,0B,            )[      'STA','SYMPTR+1',                                 ]
+(A6,09,            )[      'LDX','NSYMBOLS',                                 ]
+(F0,27,            )[      'BEQ',0A*,                                        ]
+(A0,FF,            )[ 02*  'LDY #',FF,                                       ]
+(18,               )[      'CLC',                                            ]
+(C8,               )[ 04*  'INY',                                            ]
+(B1,0A,            )[      'LDA ),Y','SYMPTR',                               ]
+(B0,06,            )[      'BCS',06*,                                        ]
+(51,02,            )[      'EOR ),Y','SYMBUF',                               ]
+(C9,01,            )[      'CMP #',01,                                       ]
+(B1,0A,            )[      'LDA ),Y','SYMPTR',                               ]
+(D0,F3,            )[ 06=&gt; 'BNE',04=&lt;                                        ]
+(C8,               )[      'INY',                                            ]
+(B1,0A,            )[      'LDA ),Y','SYMPTR',                               ]
+(85,06,            )[      'STA','NUMBER',                                   ]
+(C8,               )[      'INY',                                            ]
+(B1,0A,            )[      'LDA ),Y','SYMPTR',                               ]
+(90,30,            )[      'BCC',10*,                                        ]
+(38,               )[      'SEC',                                            ]
+(98,               )[      'TYA',                                            ]
+(65,0A,            )[      'ADC','SYMPTR',                                   ]
+(85,0A,            )[      'STA','SYMPTR',                                   ]
+(90,02,            )[      'BCC',08*,                                        ]
+(E6,0B,            )[      'INC','SYMPTR+1',                                 ]
+(CA,               )[ 08=&gt; 'DEX',                                            ]
+(D0,D9,            )[      'BNE',02=&lt;                                        ]
+(A0,FF,            )[ 0A=&gt; 'LDY #',FF,                                       ]
+(C8,               )[ 0C*  'INY',                                            ]
+(B1,02,            )[      'LDA ),Y','SYMBUF',                               ]
+(91,0A,            )[      'STA ),Y','SYMPTR',                               ]
+(D0,F9,            )[      'BNE',0C=&lt;                                        ]
+(E6,09,            )[      'INC','NSYMBOLS',                                 ]
+(C8,               )[      'INY',                                            ]
+(A5,04,            )[      'LDA','ADDRESS',                                  ]
+(91,0A,            )[      'STA ),Y','SYMPTR',                               ]
+(C8,               )[      'INY',                                            ]
+(A5,05,            )[      'LDA','ADDRESS+1',                                ]
+(91,0A,            )[      'STA ),Y','SYMPTR',                               ]
+(60,               )[      'RTS',                                            ]
+                    [ 0E=&gt;                                                   ]
+(A4,06,            )[      'LDY','NUMBER',                                   ]
+(C9,3D,            )[      'CMP #',3D,                                       ]
+(D0,0E,            )[      'BNE',12*,                                        ]
+(B1,00,            )[      'LDA ),Y','LABELS',                               ]
+(85,06,            )[      'STA','NUMBER',                                   ]
+(C8,               )[      'INY',                                            ]
+(B1,00,            )[      'LDA ),Y','LABELS',                               ]
+(85,07,            )[ 10=&gt; 'STA','NUMBER+1',                                 ]
+(A5,04,            )[      'LDA','ADDRESS',                                  ]
+(85,08,            )[      'STA','FWDREF',                                   ]
+(60,               )[      'RTS',                                            ]
+                    [ 12=&gt;                                                   ]
+(C9,2A,            )[      'CMP #',2A,                                       ]
+(D0,0A,            )[      'BNE',00*,                                        ]
+(A5,04,            )[      'LDA','ADDRESS',                                  ]
+(91,00,            )[      'STA ),Y','LABELS',                               ]
+(C8,               )[      'INY',                                            ]
+(A5,05,            )[      'LDA','ADDRESS+1',                                ]
+(91,00,            )[      'STA ),Y','LABELS',                               ]
+(60,               )[      'RTS',                                            ]
+                    [ 00=&gt;                                                   ]
+(C9,2C,            )[      'CMP #',2C,                                       ]
+(F0,09,            )[      'BEQ',00*,                                        ]
+(C9,3C,            )[      'CMP #',3C,                                       ]
+(D0,13,            )[      'BNE',04*,                                        ]
+(18,               )[      'CLC',                                            ]
+(98,               )[      'TYA',                                            ]
+(E5,04,            )[      'SBC','ADDRESS',                                  ]
+(A8,               )[      'TAY',                                            ]
+(98,               )[ 00=&gt; 'TYA',                                            ]
+(81,04,            )[      'STA ,X)','ADDRESS',                              ]
+(A5,07,            )[      'LDA','NUMBER+1',                                 ]
+(85,06,            )[      'STA','NUMBER',                                   ]
+(E6,04,            )[      'INC','ADDRESS',                                  ]
+(D0,02,            )[      'BNE',02*,                                        ]
+(E6,05,            )[      'INC','ADDRESS+1',                                ]
+(60,               )[ 02=&gt; 'RTS',                                            ]
+                    [ 04=&gt;                                                   ]
+(C9,40,            )[      'CMP #',40,                                       ]
+(D0,06,            )[      'BNE',00*,                                        ]
+(84,04,            )[      'STY','ADDRESS',                                  ]
+(A4,07,            )[      'LDY','NUMBER+1',                                 ]
+(84,05,            )[      'STY','ADDRESS+1',                                ]
+                    [ 00=&gt;                                                   ]
+(49,30,            )[      'EOR #',30,                                       ]
+(C9,0A,            )[      'CMP #',0A,                                       ]
+(90,0A,            )[      'BCC',00*,                                        ]
+(09,20,            )[      'ORA #',20,                                       ]
+(69,88,            )[      'ADC #',88,                                       ]
+(C9,FA,            )[      'CMP #',FA,                                       ]
+(90,0F,            )[      'BCC',04*,                                        ]
+(29,0F,            )[      'AND #',0F,                                       ]
+(A2,04,            )[ 00=&gt; 'LDX #',04,                                       ]
+(06,06,            )[ 02*  'ASL','NUMBER',                                   ]
+(26,07,            )[      'ROL','NUMBER+1',                                 ]
+(CA,               )[      'DEX',                                            ]
+(D0,F9,            )[      'BNE',02=&lt;                                        ]
+(05,06,            )[      'ORA','NUMBER',                                   ]
+(85,06,            )[      'STA','NUMBER',                                   ]
+(60,               )[ 04=&gt; 'RTS',                                            ]
+                    [ (RELDATA)                                              ]
+(01,04,00,09,00,   )[      (DB) 01, (DW) 0004,, (DW) 'NSYMBOLS',,            ]
+(03,01,00,1F,10,   )[      (DB) 03, (DW) 0001,, (DW) 'relocate',,            ]
+(03,09,00,00,02,   )[      (DB) 03, (DW) 0009,, (DW) 'get',,                 ]
+                    [                                                        ]
+(01,11,00,08,00,   )[      (DB) 01, (DW) 0011,, (DW) 'FWDREF',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,03,00,06,00,   )[      (DB) 01, (DW) 0003,, (DW) 'NUMBER',,              ]
+(01,01,00,04,00,   )[      (DB) 01, (DW) 0001,, (DW) 'ADDRESS',,             ]
+(01,01,00,08,00,   )[      (DB) 01, (DW) 0001,, (DW) 'FWDREF',,              ]
+                    [                                                        ]
+(01,07,00,04,00,   )[      (DB) 01, (DW) 0007,, (DW) 'ADDRESS',,             ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+                    [                                                        ]
+(03,08,00,00,02,   )[      (DB) 03, (DW) 0008,, (DW) 'get',,                 ]
+(01,08,00,02,00,   )[      (DB) 01, (DW) 0008,, (DW) 'SYMBUF',,              ]
+(01,03,00,00,12,   )[      (DB) 01, (DW) 0003,, (DW) 'SYMTBL',,              ]
+(01,01,00,0A,00,   )[      (DB) 01, (DW) 0001,, (DW) 'SYMPTR',,              ]
+(02,01,00,00,12,00,)[      (DB) 02, (DW) 0001,, (DW) 'SYMTBL',, DB 'SYMTBL', ]
+(01,01,00,0A,00,   )[      (DB) 01, (DW) 0001,, (DW) 'SYMPTR',,              ]
+(01,01,00,09,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NSYMBOLS',,            ]
+(01,07,00,0A,00,   )[      (DB) 01, (DW) 0007,, (DW) 'SYMPTR',,              ]
+(01,03,00,02,00,   )[      (DB) 01, (DW) 0003,, (DW) 'SYMBUF',,              ]
+(01,03,00,0A,00,   )[      (DB) 01, (DW) 0003,, (DW) 'SYMPTR',,              ]
+(01,04,00,0A,00,   )[      (DB) 01, (DW) 0004,, (DW) 'SYMPTR',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,02,00,0A,00,   )[      (DB) 01, (DW) 0002,, (DW) 'SYMPTR',,              ]
+(01,05,00,0A,00,   )[      (DB) 01, (DW) 0005,, (DW) 'SYMPTR',,              ]
+(01,01,00,0A,00,   )[      (DB) 01, (DW) 0001,, (DW) 'SYMPTR',,              ]
+(01,03,00,0A,00,   )[      (DB) 01, (DW) 0003,, (DW) 'SYMPTR',,              ]
+(01,07,00,02,00,   )[      (DB) 01, (DW) 0007,, (DW) 'SYMBUF',,              ]
+(01,01,00,0A,00,   )[      (DB) 01, (DW) 0001,, (DW) 'SYMPTR',,              ]
+(01,03,00,09,00,   )[      (DB) 01, (DW) 0003,, (DW) 'NSYMBOLS',,            ]
+(01,02,00,04,00,   )[      (DB) 01, (DW) 0002,, (DW) 'ADDRESS',,             ]
+(01,01,00,0A,00,   )[      (DB) 01, (DW) 0001,, (DW) 'SYMPTR',,              ]
+(01,02,00,04,00,   )[      (DB) 01, (DW) 0002,, (DW) 'ADDRESS',,             ]
+(01,01,00,0A,00,   )[      (DB) 01, (DW) 0001,, (DW) 'SYMPTR',,              ]
+                    [                                                        ]
+(01,02,00,06,00,   )[      (DB) 01, (DW) 0002,, (DW) 'NUMBER',,              ]
+(01,05,00,00,00,   )[      (DB) 01, (DW) 0005,, (DW) 'LABELS',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,02,00,00,00,   )[      (DB) 01, (DW) 0002,, (DW) 'LABELS',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,01,00,04,00,   )[      (DB) 01, (DW) 0001,, (DW) 'ADDRESS',,             ]
+(01,01,00,08,00,   )[      (DB) 01, (DW) 0001,, (DW) 'FWDREF',,              ]
+                    [                                                        ]
+(01,06,00,04,00,   )[      (DB) 01, (DW) 0006,, (DW) 'ADDRESS',,             ]
+(01,01,00,00,00,   )[      (DB) 01, (DW) 0001,, (DW) 'LABELS',,              ]
+(01,02,00,04,00,   )[      (DB) 01, (DW) 0002,, (DW) 'ADDRESS',,             ]
+(01,01,00,00,00,   )[      (DB) 01, (DW) 0001,, (DW) 'LABELS',,              ]
+                    [                                                        ]
+(01,0C,00,04,00,   )[      (DB) 01, (DW) 000C,, (DW) 'ADDRESS',,             ]
+(01,03,00,04,00,   )[      (DB) 01, (DW) 0003,, (DW) 'ADDRESS',,             ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,01,00,04,00,   )[      (DB) 01, (DW) 0001,, (DW) 'ADDRESS',,             ]
+(01,03,00,04,00,   )[      (DB) 01, (DW) 0003,, (DW) 'ADDRESS',,             ]
+                    [                                                        ]
+(01,06,00,04,00,   )[      (DB) 01, (DW) 0006,, (DW) 'ADDRESS',,             ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,01,00,04,00,   )[      (DB) 01, (DW) 0001,, (DW) 'ADDRESS',,             ]
+                    [                                                        ]
+(01,13,00,06,00,   )[      (DB) 01, (DW) 0013,, (DW) 'NUMBER',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+(01,04,00,06,00,   )[      (DB) 01, (DW) 0004,, (DW) 'NUMBER',,              ]
+(01,01,00,06,00,   )[      (DB) 01, (DW) 0001,, (DW) 'NUMBER',,              ]
+                    [                                                        ]
+(00,               )[      (DB) 00,                                          ]
+(Q                 )[ _                                                      ]
+</pre>
+<p>NMOS 6502 instructions</p>
+<pre>
+00 @ 'BRK'
+10 @ 'BPL'
+20 @ 'JSR'
+30 @ 'BMI'
+40 @ 'RTI'
+50 @ 'BVC'
+60 @ 'RTS'
+70 @ 'BVS'
+90 @ 'BCC'
+A0 @ 'LDY #'
+B0 @ 'BCS'
+C0 @ 'CPY #'
+D0 @ 'BNE'
+E0 @ 'CPX #'
+F0 @ 'BEQ'
+01 @ 'ORA ,X)'
+11 @ 'ORA ),Y'
+21 @ 'AND ,X)'
+31 @ 'AND ),Y'
+41 @ 'EOR ,X)'
+51 @ 'EOR ),Y'
+61 @ 'ADC ,X)'
+71 @ 'ADC ),Y'
+81 @ 'STA ,X)'
+91 @ 'STA ),Y'
+A1 @ 'LDA ,X)'
+B1 @ 'LDA ),Y'
+C1 @ 'CMP ,X)'
+D1 @ 'CMP ),Y'
+E1 @ 'SBC ,X)'
+F1 @ 'SBC ),Y'
+A2 @ 'LDX #'
+24 @ 'BIT'
+84 @ 'STY'
+94 @ 'STY ,X'
+A4 @ 'LDY'
+B4 @ 'LDY ,X'
+C4 @ 'CPY'
+E4 @ 'CPX'
+05 @ 'ORA'
+15 @ 'ORA ,X'
+25 @ 'AND'
+35 @ 'AND ,X'
+45 @ 'EOR'
+55 @ 'EOR ,X'
+65 @ 'ADC'
+75 @ 'ADC ,X'
+85 @ 'STA'
+95 @ 'STA ,X'
+A5 @ 'LDA'
+B5 @ 'LDA ,X'
+C5 @ 'CMP'
+D5 @ 'CMP ,X'
+E5 @ 'SBC'
+F5 @ 'SBC ,X'
+06 @ 'ASL'
+16 @ 'ASL ,X'
+26 @ 'ROL'
+36 @ 'ROL ,X'
+46 @ 'LSR'
+56 @ 'LSR ,X'
+66 @ 'ROR'
+76 @ 'ROR ,X'
+86 @ 'STX'
+96 @ 'STX ,Y'
+A6 @ 'LDX'
+B6 @ 'LDX ,Y'
+C6 @ 'DEC'
+D6 @ 'DEC ,X'
+E6 @ 'INC'
+F6 @ 'INC ,X'
+08 @ 'PHP'
+18 @ 'CLC'
+28 @ 'PLP'
+38 @ 'SEC'
+48 @ 'PHA'
+58 @ 'CLI'
+68 @ 'PLA'
+78 @ 'SEI'
+88 @ 'DEY'
+98 @ 'TYA'
+A8 @ 'TAY'
+B8 @ 'CLV'
+C8 @ 'INY'
+D8 @ 'CLD'
+E8 @ 'INX'
+F8 @ 'SED'
+09 @ 'ORA #'
+19 @ 'ORA ,Y'
+29 @ 'AND #'
+39 @ 'AND ,Y'
+49 @ 'EOR #'
+59 @ 'EOR ,Y'
+69 @ 'ADC #'
+79 @ 'ADC ,Y'
+99 @ 'STA ,Y'
+A9 @ 'LDA #'
+B9 @ 'LDA ,Y'
+C9 @ 'CMP #'
+D9 @ 'CMP ,Y'
+E9 @ 'SBC #'
+F9 @ 'SBC ,Y'
+0A @ 'ASL A'
+2A @ 'ROL A'
+4A @ 'LSR A'
+6A @ 'ROR A'
+8A @ 'TXA'
+9A @ 'TXS'
+AA @ 'TAX'
+BA @ 'TSX'
+CA @ 'DEX'
+EA @ 'NOP'
+2C @ 'BITW'
+4C @ 'JMP'
+6C @ 'JMP ('
+8C @ 'STYW'
+AC @ 'LDYW'
+BC @ 'LDYW ,X'
+CC @ 'CPYW'
+EC @ 'CPXW'
+0D @ 'ORAW'
+1D @ 'ORAW ,X'
+2D @ 'ANDW'
+3D @ 'ANDW ,X'
+4D @ 'EORW'
+5D @ 'EORW ,X'
+6D @ 'ADCW'
+7D @ 'ADCW ,X'
+8D @ 'STAW'
+9D @ 'STAW ,X'
+AD @ 'LDAW'
+BD @ 'LDAW ,X'
+CD @ 'CMPW'
+DD @ 'CMPW ,X'
+ED @ 'SBCW'
+FD @ 'SBCW ,X'
+0E @ 'ASLW'
+1E @ 'ASLW ,X'
+2E @ 'ROLW'
+3E @ 'ROLW ,X'
+4E @ 'LSRW'
+5E @ 'LSRW ,X'
+6E @ 'RORW'
+7E @ 'RORW ,X'
+8E @ 'STXW'
+AE @ 'LDXW'
+BE @ 'LDXW ,Y'
+CE @ 'DECW'
+DE @ 'DECW ,X'
+EE @ 'INCW'
+FE @ 'INCW ,X'
+</pre>
+<p>Additional 65C02 instructions</p>
+<pre>
+80 @ 'BRA'
+12 @ 'ORA ('
+32 @ 'AND ('
+52 @ 'EOR ('
+72 @ 'ADC ('
+92 @ 'STA ('
+B2 @ 'LDA ('
+D2 @ 'CMP ('
+F2 @ 'SBC ('
+04 @ 'TSB'
+14 @ 'TRB'
+34 @ 'BIT ,X'
+64 @ 'STZ'
+74 @ 'STZ ,X'
+89 @ 'BIT #'
+1A @ 'INC A'
+3A @ 'DEC A'
+5A @ 'PHY'
+7A @ 'PLY'
+DA @ 'PHX'
+FA @ 'PLX'
+0C @ 'TSBW'
+1C @ 'TRBW'
+3C @ 'BITW ,X'
+7C @ 'JMP ,X)'
+9C @ 'STZW'
+9E @ 'STZW ,X'
+</pre>
+<p>Additional Rockwell and WDC 65C02 instructions</p>
+<pre>
+07 @ 'RMB0'
+17 @ 'RMB1'
+27 @ 'RMB2'
+37 @ 'RMB3'
+47 @ 'RMB4'
+57 @ 'RMB5'
+67 @ 'RMB6'
+77 @ 'RMB7'
+87 @ 'SMB0'
+97 @ 'SMB1'
+A7 @ 'SMB2'
+B7 @ 'SMB3'
+C7 @ 'SMB4'
+D7 @ 'SMB5'
+E7 @ 'SMB6'
+F7 @ 'SMB7'
+0F @ 'BBR0'
+1F @ 'BBR1'
+2F @ 'BBR2'
+3F @ 'BBR3'
+4F @ 'BBR4'
+5F @ 'BBR5'
+6F @ 'BBR6'
+7F @ 'BBR7'
+8F @ 'BBS0'
+9F @ 'BBS0'
+AF @ 'BBS0'
+BF @ 'BBS0'
+CF @ 'BBS0'
+DF @ 'BBS0'
+EF @ 'BBS0'
+FF @ 'BBS0'
+</pre>
+<p>Additional WDC 65C02 instructions</p>
+<pre>
+CB @ 'WAI'
+DB @ 'STP'
+</pre>
+<p>SWEET16 instructions</p>
+<pre>
+00 @ 'RTN'
+01 @ 'BR'
+02 @ 'BNC'
+03 @ 'BC'
+04 @ 'BP'
+05 @ 'BM'
+06 @ 'BZ'
+07 @ 'BNZ'
+08 @ 'BM1'
+09 @ 'BNM1'
+0A @ 'BK'
+0B @ 'RS'
+0C @ 'BS'
+0D @ 'NUL'
+1 @ 'SET'
+2 @ 'LD'
+3 @ 'ST'
+4 @ 'LD @'
+5 @ 'ST @'
+6 @ 'LDD @'
+7 @ 'STD @'
+8 @ 'POP @'
+9 @ 'STP @'
+A @ 'ADD'
+B @ 'SUB'
+C @ 'POPD @'
+D @ 'CPR'
+E @ 'INR'
+F @ 'DCR'
+</pre>
+<p>Note that for SWEET16 register instructions the register number precedes
+the comma, e.g.:</p>
+<pre>
+'LD @' 1,
+'DCR' 2,
+'SET' 3, ABCD,,
+</pre>
+</body></html>
+
+<!-- Hosting24 Analytics Code -->
+<script type="text/javascript" src="http://stats.hosting24.com/count.php"></script>
+<!-- End Of Analytics Code -->

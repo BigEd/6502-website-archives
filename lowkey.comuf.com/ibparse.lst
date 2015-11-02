@@ -1,0 +1,1003 @@
+                       ORG $C8
+00C8          ZC8      DS  1
+                       ORG $F1
+00F1          ZF1      DS  1
+                       ORG $FD
+00FD          ZFD      DS  1   ; X (number stack pointer) save (parse)
+00FE          ZFE      DS  2   ; command/syntax table pointer
+
+              ;
+              ; PARSE routine
+              ;
+              ; The entry point is between :14 and PARSE15
+              ;
+              ; WARM enters with:
+              ;   A = $FF (LEDFF), X = $20, ZC8 = $FF, ZF1 = position of _
+              ;
+              ; INPUT (numeric variable) enters with:
+              ;   A = $15 (LEC2B), X = $20, ZC8 = $FF, ZF1 = position of _
+              ;
+              ; Zero page variables:
+              ;   ZC8 input buffer index
+              ;   ZF1 parse buffer index
+              ;   ZFD parse stack index
+              ;   ZFE syntax table pointer
+              ;
+              ; Page 2 usage:
+              ;
+              ;   $200                             $2FF
+              ;   !--------------+--------------+-----!
+              ;   ! input buffer | parse buffer ! ... |
+              ;   +--------------+--------------+-----+
+              ;   ^              ^              ^
+              ;   |<--- ZC8 ---->|<---- ZF1 --->|
+              ;
+              ; The syntax table is handled in reverse order
+              ;
+              ; Syntax table bytes:
+              ;      00 generate a SYNTAX ERROR
+              ;      01 store an inline string character
+              ;         if char is " or _
+              ;           pull syntax table pointer (since the next byte is
+              ;           a $7F -- if it weren't, the syntax table pointer
+              ;           would be advanced 2 bytes)
+              ;         otherwise
+              ;           store char
+              ;           advance syntax table pointer 1 byte
+              ;      02 store a comment (REM) character
+              ;         if char is _
+              ;           pull syntax table pointer (since the next byte is
+              ;           a $7F -- if it weren't, the syntax table pointer
+              ;           would be advanced 2 bytes)
+              ;         otherwise
+              ;           store char
+              ;           advance syntax table pointer 1 byte
+              ;      03 return (successfully)
+              ;   04-1F (categories 4-15) handle category, next rule is required
+              ;   20-3F (categories 0-15) handle category, next rule is optional
+              ;   40-3F (categories 0-15) handle category, end of category
+              ;   60-7D (categories 0-13) handle category, end of rule
+              ;      7E back up syntax table pointer 2 bytes
+              ;      7F back up syntax table pointer 1 byte
+              ;      80 parse letter (next rule is required)
+              ;         if char is A-Z
+              ;           store char
+              ;           advance syntax table pointer 1 byte
+              ;         otherwise
+              ;           handle the next rule
+              ;      81 parse digit (next rule is required)
+              ;         if char is 0-9
+              ;           store char
+              ;           advance syntax table pointer 1 byte
+              ;         otherwise
+              ;           handle the next rule
+              ;   82-BF verb chars "-_ (more chars or next rule is required)
+              ;         if char matches (input buffer char)
+              ;           if there are more verb chars ($80-$FF)
+              ;             compare the next verb char
+              ;           otherwise
+              ;             store the token
+              ;             handle the next rule
+              ;         otherwise
+              ;           handle the next rule
+              ;      C0 parse letter (end of rule)
+              ;         if char is A-Z
+              ;           store char
+              ;           pull syntax table pointer
+              ;         otherwise
+              ;           handle the next rule
+              ;      C1 parse digit (end of rule)
+              ;         if char is 0-9
+              ;           store char
+              ;           pull syntax table pointer
+              ;         otherwise
+              ;           handle the next rule
+              ;   C2-FF chars "-_ (end of rule)
+              ;         if char matches (input buffer char)
+              ;           if the verb follows a numeric variable name (tokens
+              ;           $85-$8B)
+              ;             force a mismatch to end the variable name before
+              ;             verb
+              ;           otherwise
+              ;             store the token
+              ;             pull the syntax table pointer
+              ;         otherwise
+              ;           handle the next rule
+              ;
+              ; A category is handled by pushing the input buffer index, the
+              ; parse buffer index, the syntax table pointer, and setting
+              ; the syntax table pointer to point to the category
+              ;
+              ; The next rule is handled by restoring the input buffer index
+              ; and parse buffer index, and advancing the syntax table
+              ; pointer until the byte is $40-$7F or $C0-$FF, then:
+              ;   if the byte is $60-7F or $C0-$FF
+              ;     advance the syntax table pointer 1 byte
+              ;   otherwise
+              ;     pull the syntax table pointer
+              ;     handle the next rule
+              ;
+              ; When the syntax table pointer is pulled after a byte has
+              ; been stored or the rule was optional, if the pointer now
+              ; points to a handle category zero byte ($20, $40, or $60), the
+              ; digits are converted into a integer and handled specially.
+              ;
+              ; In only one instance (noted below) is the byte preceding a
+              ; a category in the range $20-$3F (indicating that the next
+              ; rule is optional).  All padding bytes are $00.
+              ;
+              ; Category 0 must always be the inline integer category, since
+              ; category 0 is handled specially
+              ;
+              ; When parentheses are nested deeply enough, it is possible for
+              ; ZD9 to be overwritten when pushing onto the parse stack.
+              ; When an error occurs, the error handler at LE3E0 may handle
+              ; the error as though a program were running (by printing a
+              ; line number) or as though an error occured during INPUT (by
+              ; returning to the numeric input routine, which can crash since
+              ; the (6502) stack pointer will be overwritten.  When parsing
+              ; is successful, is does not matter if ZD9 was overwritten,
+              ; since WARM will reset ZD9.  The INPUT parsing rules will
+              ; never use enough of the parse stack to overwrite any critical
+              ; zero page variables
+              ;
+E3ED 2A       PARSE1   ROL              ; convert verb char to $A0-$DF
+E3EE 69 A0             ADC #$A0
+E3F0 DD 00 02          CMP IN,X         ; compare to inbuf
+E3F3 D0 53             BNE PARSE10
+E3F5 B1 FE             LDA (ZFE),Y
+E3F7 0A                ASL
+E3F8 30 06             BMI :2           ; branch if end of verb ($C0-$FF)
+E3FA 88                DEY
+E3FB B1 FE             LDA (ZFE),Y
+E3FD 30 29             BMI PARSE7       ; branch if not end of verb
+E3FF C8                INY              ; point to last c (char) of verb
+E400 86 C8    :2       STX ZC8          ; store inbuf index
+E402 98                TYA              ; save syntax table ptr lo (Y)
+E403 48                PHA              ;
+E404 A2 00             LDX #$00         ; get token # - 1 of last verb name on
+E406 A1 FE             LDA (ZFE,X)      ;  this page
+E408 AA                TAX              ;
+E409 4A       :3       LSR              ; get token # in X
+E40A 49 40             EOR #$40         ; if last byte = $00-$7F & chr = $80-$FF
+E40C 11 FE             ORA (ZFE),Y      ;
+E40E C9 C0             CMP #$C0         ;    or char = $C0-$FF
+E410 90 01             BCC :4           ;
+E412 E8                INX              ;    then end of verb, so increment X
+E413 C8       :4       INY              ;
+E414 D0 F3             BNE :3           ; loop until end of syntax table page
+E416 68                PLA              ; restore syntax table ptr lo (Y)
+E417 A8                TAY              ; "
+E418 8A                TXA              ; put token # in A
+E419 4C F8 F2          JMP PARSE29
+E41C E6 F1    PSTORE   INC ZF1          ; store A in parsebuf
+E41E A6 F1             LDX ZF1          ; & advance parsebuf index
+E420 F0 BC             BEQ LE3DE        ; " Too long err if buf overflow
+E422 9D 00 02          STA IN,X         ; "
+E425 60       PARSE5   RTS              ; "
+E426 A6 C8    PARSE6   LDX ZC8
+E428 A9 A0    PARSE7   LDA #$A0
+E42A E8       :8       INX              ; skip spaces and control characters
+E42B DD 00 02          CMP IN,X         ; "
+E42E B0 FA             BCS :8           ; "
+E430 B1 FE             LDA (ZFE),Y
+E432 29 3F             AND #$3F
+E434 4A                LSR
+E435 D0 B6             BNE PARSE1       ; branch if $82-$BF or $C2-$FF
+E437 BD 00 02          LDA IN,X
+E43A B0 06             BCS :9
+E43C 69 3F             ADC #$3F         ; here if $80 or $C0
+E43E C9 1A             CMP #26
+E440 90 6F             BCC PARSE20      ; branch if A-Z (goes to PARSE10 if not)
+E442 69 4F    :9       ADC #$4F         ; here if $81 or $C1
+E444 C9 0A             CMP #10
+E446 90 69             BCC PARSE20      ; branch if 0-9
+E448 A6 FD    PARSE10  LDX ZFD
+E44A C8       :11      INY
+E44B B1 FE             LDA (ZFE),Y      ; get previous byte
+E44D 29 E0             AND #$E0
+E44F C9 20             CMP #$20
+E451 F0 7A             BEQ PARSE25      ; branch if byte was $20-$3F
+E453 B5 A8             LDA ZA8,X        ; fetch inbuf index
+E455 85 C8             STA ZC8
+E457 B5 D1             LDA ZD1,X        ; fetch parsebuf index
+E459 85 F1             STA ZF1
+E45B 88       :12      DEY
+E45C B1 FE             LDA (ZFE),Y      ; get the next byte
+E45E 0A                ASL
+E45F 10 FA             BPL :12          ; branch if byte was $00-$3F or $80-$BF
+E461 88                DEY
+E462 B0 38             BCS PARSE17      ; branch if byte was $C0-$FF
+E464 0A                ASL
+E465 30 35             BMI PARSE17      ; branch if byte was $60-$7F
+E467 B4 58             LDY Z58,X        ; pull syntax table ptr high byte
+E469 84 FF             STY ZFE+1
+E46B B4 80             LDY Z80,X        ; pull syntax table ptr low byte
+E46D E8                INX
+E46E 10 DA             BPL :11
+E470 F0 B3    PARSE13  BEQ PARSE5       ; return (branch) if $03
+E472 C9 7E             CMP #$7E
+E474 B0 22             BCS PARSE15
+E476 CA                DEX
+E477 10 04             BPL :14
+E479 A0 06             LDY #LEB06-LEB00 ; BUG! msg should be TOO MANY PARENS
+E47B 10 29             BPL PARSE18
+E47D 94 80    :14      STY Z80,X        ; push syntax table ptr low byte (Y)
+E47F A4 FF             LDY ZFE+1
+E481 94 58             STY Z58,X        ; push syntax table ptr high byte
+E483 A4 C8             LDY ZC8
+E485 94 A8             STY ZA8,X        ; push inbuf index
+E487 A4 F1             LDY ZF1
+E489 94 D1             STY ZD1,X        ; push parsebuf index
+E48B 29 1F             AND #$1F
+E48D A8                TAY
+E48E B9 97 F1          LDA CATS,Y       ; get rule Y
+E491 0A       PARSE    ASL              ; Parse entry point
+E492 A8                TAY
+E493 A9 76             LDA #LEC00/512
+E495 2A                ROL
+E496 85 FF             STA ZFE+1
+E498 D0 01    PARSE15  BNE :16
+E49A C8                INY              ; here if $7E
+E49B C8       :16      INY              ; here if $7F
+E49C 86 FD    PARSE17  STX ZFD
+E49E B1 FE             LDA (ZFE),Y
+E4A0 30 84             BMI PARSE6
+E4A2 D0 05             BNE PARSE19
+E4A4 A0 0E             LDY #LEB0E-LEB00 ; Syntax error if $00
+E4A6 4C E0 E3 PARSE18  JMP LE3E0        ; TOERR_ (to error message handler)
+E4A9 C9 03    PARSE19  CMP #$03
+E4AB B0 C3             BCS PARSE13
+E4AD 4A                LSR
+E4AE A6 C8             LDX ZC8
+E4B0 E8                INX
+E4B1 BD 00 02 PARSE20  LDA IN,X
+E4B4 90 04             BCC :21
+E4B6 C9 A2             CMP #$A2         ; " here if $01
+E4B8 F0 0A             BEQ PARSE23
+E4BA C9 DF    :21      CMP #"_"         ; here if $02
+E4BC F0 06             BEQ PARSE23
+E4BE 86 C8             STX ZC8
+E4C0 20 1C E4 PARSE22  JSR PSTORE
+E4C3 C8                INY
+E4C4 88       PARSE23  DEY
+E4C5 A6 FD             LDX ZFD
+E4C7 B1 FE    PARSE24  LDA (ZFE),Y      ; get byte
+E4C9 88                DEY
+E4CA 0A                ASL
+E4CB 10 CF             BPL PARSE17      ; branch if it was $00-$3F or $80-$BF
+E4CD B4 58    PARSE25  LDY Z58,X        ; pull syntax table ptr high byte
+E4CF 84 FF             STY ZFE+1
+E4D1 B4 80             LDY Z80,X        ; pull syntax table ptr low byte (Y)
+E4D3 E8                INX
+E4D4 B1 FE             LDA (ZFE),Y      ; get byte
+E4D6 29 9F             AND #$9F
+E4D8 D0 ED             BNE PARSE24      ; branch if it wasn't $20, $40 or $60
+E4DA 85 F2             STA ZF2          ; convert number from ASCII to twos
+E4DC 85 F3             STA ZF3          ; complement & store in parsebuf (low
+E4DE 98                TYA              ; byte first)
+E4DF 48                PHA              ; "
+E4E0 86 FD             STX ZFD          ; " save stack "pointer" (index)
+E4E2 B4 D0             LDY ZD1-1,X      ; " get "pulled" parsebuf index
+E4E4 84 C9             STY ZC9          ; " save temporarily
+E4E6 18                CLC              ; "
+E4E7 A9 0A    :26      LDA #10          ; " loop 10 times to multiply
+E4E9 85 F9             STA ZF9          ; "
+E4EB A2 00             LDX #$00         ; " calculate num=num*10+digit
+E4ED C8                INY              ; "
+E4EE B9 00 02          LDA IN,Y         ; " get digit
+E4F1 29 0F             AND #$0F         ; "
+E4F3 65 F2    :27      ADC ZF2          ; "
+E4F5 48                PHA              ; "
+E4F6 8A                TXA              ; "
+E4F7 65 F3             ADC ZF3          ; "
+E4F9 30 1C             BMI :28          ; " branch if >32767
+E4FB AA                TAX              ; "
+E4FC 68                PLA              ; "
+E4FD C6 F9             DEC ZF9          ; "
+E4FF D0 F2             BNE :27          ; "
+E501 85 F2             STA ZF2          ; "
+E503 86 F3             STX ZF3          ; "
+E505 C4 F1             CPY ZF1          ; "
+E507 D0 DE             BNE :26          ; " loop until all digits are done
+E509 A4 C9             LDY ZC9          ; "
+E50B C8                INY              ; "
+E50C 84 F1             STY ZF1          ; " adjust parsebuf index
+E50E 20 1C E4          JSR PSTORE       ; " store low byte
+E511 68                PLA              ; " return with syntax table ptr (low
+E512 A8                TAY              ; "  byte) in Y
+E513 A5 F3             LDA ZF3          ; "
+E515 B0 A9             BCS PARSE22      ; " store high byte
+E517 A0 00    :28      LDY #LEB00-LEB00 ; " >32767 error
+E519 10 8B             BPL PARSE18
+                       ORG $F2F8
+F2F8 C9 85    PARSE29  CMP #$85
+F2FA B0 03             BCS :30
+F2FC 4C C0 E4          JMP PARSE22
+F2FF A0 02    :30      LDY #LEC02-LEC00 ; forced mismatch
+F301 4C 48 E4          JMP PARSE10
+
+                       ORG $E980
+E980 00       LE980    DB  2*$00+$00 ;          end of line (on verb stack)
+E981 00       LE981    DB  2*$00+$00 ; _        end of line (compiled token)
+E982 00                DB  2*$00+$00 ; _        end of line (empty line)
+E983 AB                DB  2*$55+$01 ; :
+E984 03                DB  2*$01+$01 ; LOAD
+E985 03                DB  2*$01+$01 ; SAVE
+E986 03                DB  2*$01+$01 ; CON
+E987 03                DB  2*$01+$01 ; RUN      RUN 1
+E988 03                DB  2*$01+$01 ; RUN      RUN
+E989 03                DB  2*$01+$01 ; DEL
+E98A 03                DB  2*$01+$01 ; ,        DEL 1,2
+E98B 03                DB  2*$01+$01 ; NEW
+E98C 03                DB  2*$01+$01 ; CLR
+E98D 03                DB  2*$01+$01 ; AUTO 
+E98E 03                DB  2*$01+$01 ; ,        AUTO 1,2
+E98F 03                DB  2*$01+$01 ; MAN
+E990 03                DB  2*$01+$01 ; HIMEM:
+E991 03                DB  2*$01+$01 ; LOMEM:
+E992 3F                DB  2*$15+$15 ; +        A=1+2
+E993 3F                DB  2*$15+$15 ; -        A=1-2
+E994 C0                DB  2*$40+$40 ; *        A=1*2
+E995 C0                DB  2*$40+$40 ; /        A=1/2
+E996 3C                DB  2*$14+$14 ; =        IF 1=2 THEN 3
+E997 3C                DB  2*$14+$14 ; #        IF 1#2 THEN 3
+E998 3C                DB  2*$14+$14 ; >=       IF 1>=2 THEN 3
+E999 3C                DB  2*$14+$14 ; >        IF 1>2 THEN 3
+E99A 3C                DB  2*$14+$14 ; <=       IF 1<=2 THEN 3
+E99B 3C                DB  2*$14+$14 ; <>       IF 1<>2 THEN 3
+E99C 3C                DB  2*$14+$14 ; <        IF 1<2 THEN 3
+E99D 30                DB  2*$10+$10 ; AND      IF A=B AND C=D THEN 1
+E99E 0F                DB  2*$05+$05 ; OR       IF A=B OR C=D THEN 1
+E99F C0                DB  2*$40+$40 ; MOD      A=1 MOD 2
+E9A0 C3                DB  2*$41+$41 ; ^        A=1^2
+E9A1 FF                DB  2*$55+$55 ; +        used only during parse
+E9A2 55                DB  2*$00+$55 ; (        DIM A$(2)
+E9A3 00                DB  2*$00+$00 ; ,        A$=B$(1,2)
+E9A4 AB                DB  2*$55+$01 ; THEN     IF 1=2 THEN 3
+E9A5 AB       LE9A5    DB  2*$55+$01 ; THEN     IF 1=2 THEN PRINT
+E9A6 03                DB  2*$01+$01 ; ,        INPUT A$,B$ or INPUT "A",B$
+E9A7 03                DB  2*$01+$01 ; ,        INPUT A,B or INPUT "A",B 
+E9A8 FF       LE9A8    DB  2*$55+$55 ; "        first quote of A$="B"
+E9A9 FF                DB  2*$55+$55 ; "        second quote of A$="B"
+E9AA 55                DB  2*$00+$55 ; (        A$=B$(1,2)
+E9AB FF                DB  2*$55+$55 ; !        used only during parse
+E9AC FF                DB  2*$55+$55 ; !        used only during parse
+E9AD 55                DB  2*$00+$55 ; (        A=B(1) or A(1)=2
+E9AE CF                DB  2*$45+$45 ; PEEK
+E9AF CF                DB  2*$45+$45 ; RND
+E9B0 CF                DB  2*$45+$45 ; SGN
+E9B1 CF                DB  2*$45+$45 ; ABS
+E9B2 CF                DB  2*$45+$45 ; PDL
+E9B3 FF                DB  2*$55+$55 ; RNDX     used only during parse
+E9B4 55                DB  2*$00+$55 ; (        DIM A(2)
+E9B5 C6                DB  2*$41+$44 ; +        A=+1
+E9B6 C6                DB  2*$41+$44 ; -        A=-A
+E9B7 C6                DB  2*$41+$44 ; NOT      IF NOT 1=2 THEN 3
+E9B8 55                DB  2*$00+$55 ; (        functions PEEK(0) or PDL(0)
+E9B9 F0                DB  2*$50+$50 ; =        IF A$=B$ THEN 3
+E9BA F0                DB  2*$50+$50 ; #        IF A$#B$ THEN 3
+E9BB CF                DB  2*$45+$45 ; LEN(
+E9BC CF                DB  2*$45+$45 ; ASC(
+E9BD 55                DB  2*$00+$55 ; SCRN(
+E9BE 01                DB  2*$00+$01 ; ,        A=SCRN(1,2)
+E9BF 55                DB  2*$00+$55 ; (        math (1+2)*3
+E9C0 FF       LE9C0    DB  2*$55+$55 ; $        A$="B" or PRINT A$
+E9C1 FF                DB  2*$55+$55 ;  $       used only during parse
+E9C2 55                DB  2*$00+$55 ; (        A$(2)="B"
+E9C3 03                DB  2*$01+$01 ; ,        DIM A$(2),B$(3)
+E9C4 03                DB  2*$01+$01 ; ,        DIM A(2),B(3)
+E9C5 03                DB  2*$01+$01 ; ;        PRINT A$;B$
+E9C6 03                DB  2*$01+$01 ; ;        PRINT 1;2
+E9C7 03                DB  2*$01+$01 ; ;        PRINT 1; or PRINT A$;
+E9C8 03                DB  2*$01+$01 ; ,        PRINT A$,B$
+E9C9 03                DB  2*$01+$01 ; ,        PRINT 1,2
+E9CA 03                DB  2*$01+$01 ; ,        PRINT 1, or PRINT A$,
+E9CB 03                DB  2*$01+$01 ; TEXT
+E9CC 03                DB  2*$01+$01 ; GR
+E9CD 03                DB  2*$01+$01 ; CALL
+E9CE 03                DB  2*$01+$01 ; DIM      DIM A$(2)
+E9CF 03                DB  2*$01+$01 ; DIM      DIM A(2)
+E9D0 03       LE9D0    DB  2*$01+$01 ; TAB
+E9D1 03                DB  2*$01+$01 ; END
+E9D2 03                DB  2*$01+$01 ; INPUT    INPUT A$
+E9D3 03                DB  2*$01+$01 ; INPUT    INPUT "A",B$ or INPUT "A",B
+E9D4 03                DB  2*$01+$01 ; INPUT    INPUT A
+E9D5 03                DB  2*$01+$01 ; FOR
+E9D6 03                DB  2*$01+$01 ; =        FOR A=1 TO 2
+E9D7 03                DB  2*$01+$01 ; TO
+E9D8 03                DB  2*$01+$01 ; STEP
+E9D9 03                DB  2*$01+$01 ; NEXT
+E9DA 03                DB  2*$01+$01 ; ,        NEXT A,B
+E9DB 03                DB  2*$01+$01 ; RETURN
+E9DC 03                DB  2*$01+$01 ; GOSUB
+E9DD 00       LE9DD    DB  2*$00+$00 ; REM
+E9DE AB                DB  2*$55+$01 ; LET
+E9DF 03                DB  2*$01+$01 ; GOTO
+E9E0 57                DB  2*$01+$55 ; IF
+E9E1 03                DB  2*$01+$01 ; PRINT    PRINT A$
+E9E2 03                DB  2*$01+$01 ; PRINT    PRINT 1
+E9E3 03                DB  2*$01+$01 ; PRINT    PRINT
+E9E4 03                DB  2*$01+$01 ; POKE
+E9E5 07                DB  2*$01+$05 ; ,        POKE 1,2
+E9E6 03                DB  2*$01+$01 ; COLOR=
+E9E7 03                DB  2*$01+$01 ; PLOT
+E9E8 03                DB  2*$01+$01 ; ,        PLOT 1,2
+E9E9 03                DB  2*$01+$01 ; HLIN
+E9EA 03                DB  2*$01+$01 ; ,        HLIN 1,2 AT 3
+E9EB 03                DB  2*$01+$01 ; AT       HLIN 1,2 AT 3
+E9EC 03                DB  2*$01+$01 ; VLIN
+E9ED 03                DB  2*$01+$01 ; ,        VLIN 1,2 AT 3
+E9EE 03                DB  2*$01+$01 ; AT       VLIN 1,2 AT 3
+E9EF 03                DB  2*$01+$01 ; VTAB
+E9F0 03                DB  2*$01+$01 ; =        A$="B"
+E9F1 03                DB  2*$01+$01 ; =        A=1
+E9F2 AA                DB  2*$55+$00 ; )
+E9F3 FF                DB  2*$55+$55 ; )        used only during parse
+E9F4 03                DB  2*$01+$01 ; LIST     LIST 1 or LIST 1,2
+E9F5 03                DB  2*$01+$01 ; ,        LIST 1,2
+E9F6 03                DB  2*$01+$01 ; LIST     LIST
+E9F7 03                DB  2*$01+$01 ; POP
+E9F8 03                DB  2*$01+$01 ; NODSP    NODSP A$
+E9F9 03                DB  2*$01+$01 ; NODSP    NODSP A
+E9FA 03                DB  2*$01+$01 ; NOTRACE
+E9FB 03                DB  2*$01+$01 ; DSP      DSP A$
+E9FC 03                DB  2*$01+$01 ; DSP      DSP A
+E9FD 03                DB  2*$01+$01 ; TRACE
+E9FE 03                DB  2*$01+$01 ; PR#
+E9FF 03                DB  2*$01+$01 ; IN#
+
+                       ORG $EC00
+EC00 50       LEC00    DB  LE9D0-LE980
+EC01          CAT
+EC01 20       CAT01    DB  $20           ; unused
+EC02 4F       LEC02    DB  $40+CI0F-CATS
+EC03 C0                DB  ' '+$A0       ; 8C
+EC04 F4                DB  'T'+$A0
+EC05 A1                DB  'A'+$60       ; 8B
+EC06 E4                DB  'D'+$A0
+EC07 AF                DB  'O'+$60
+EC08 AD                DB  'M'+$60       ; 8A
+EC09 F2                DB  'R'+$A0
+EC0A AF                DB  'O'+$60       ; 89
+EC0B E4                DB  'D'+$A0
+EC0C AE                DB  'N'+$60
+EC0D A1                DB  'A'+$60       ; 88
+EC0E F0                DB  'P'+$A0
+EC0F A5                DB  'E'+$60
+EC10 B4                DB  'T'+$60
+EC11 B3                DB  'S'+$60       ; 87
+EC12 EF                DB  'O'+$A0
+EC13 B4                DB  'T'+$60       ; 86
+EC14 EE                DB  'N'+$A0
+EC15 A5                DB  'E'+$60
+EC16 A8                DB  'H'+$60
+EC17 B4       CAT1D    DB  'T'+$60       ; 85
+EC18 5C                DB  $40+CI1C-CATS
+EC19 80       CAT19    DB  ' '+$60       ; 84
+EC1A 00                DB  $00           ; padding
+EC1B 40                DB  $40+CI00-CATS ;
+EC1C 60                DB  $60+CI00-CATS ;
+EC1D 8D                DB  '-'+$60       ; 83
+EC1E 60                DB  $60+CI00-CATS ;
+EC1F 8B       CAT13    DB  '+'+$60       ; 82
+EC20 7F                DB  $7F
+EC21 1D       CAT1C    DB  $00+CI1D-CATS
+EC22 20                DB  $20           ; indicate next rule is optional
+EC23 7E                DB  $7E
+EC24 8C                DB  ','+$60       ; 81
+EC25 33       CAT12    DB  $20+CI13-CATS ;
+EC26 00                DB  $00           ; padding
+EC27 00                DB  $00           ;
+EC28 60                DB  $60           ; indicate the end of this rule
+EC29 03                DB  $03           ;
+EC2A BF                DB  '_'+$60       ; 80
+EC2B 12       LEC2B    DB  $00+CI12-CATS ; input # parse
+EC2C 47                DB  $40+CI07-CATS
+EC2D 83                DB  '#'+$60
+EC2E AE                DB  'N'+$60
+EC2F A9                DB  'I'+$60       ; 7F
+EC30 67                DB  $60+CI07-CATS
+EC31 83                DB  '#'+$60
+EC32 B2                DB  'R'+$60
+EC33 B0                DB  'P'+$60       ; 7E
+EC34 E5                DB  'E'+$A0
+EC35 A3                DB  'C'+$60
+EC36 A1                DB  'A'+$60
+EC37 B2                DB  'R'+$60
+EC38 B4                DB  'T'+$60       ; 7D
+EC39 79                DB  $60+CI19-CATS
+EC3A B0                DB  'P'+$60
+EC3B B3                DB  'S'+$60
+EC3C A4                DB  'D'+$60       ; 7C
+EC3D 69                DB  $60+CI09-CATS
+EC3E B0                DB  'P'+$60
+EC3F B3                DB  'S'+$60
+EC40 A4                DB  'D'+$60       ; 7B
+EC41 E5                DB  'E'+$A0
+EC42 A3                DB  'C'+$60
+EC43 A1                DB  'A'+$60
+EC44 B2                DB  'R'+$60
+EC45 B4                DB  'T'+$60
+EC46 AF                DB  'O'+$60
+EC47 AE                DB  'N'+$60       ; 7A
+EC48 79                DB  $60+CI19-CATS
+EC49 B0                DB  'P'+$60
+EC4A B3                DB  'S'+$60
+EC4B A4                DB  'D'+$60
+EC4C AF                DB  'O'+$60
+EC4D AE                DB  'N'+$60       ; 79
+EC4E 69                DB  $60+CI09-CATS
+EC4F B0                DB  'P'+$60
+EC50 B3                DB  'S'+$60
+EC51 A4                DB  'D'+$60
+EC52 AF                DB  'O'+$60
+EC53 AE                DB  'N'+$60       ; 78
+EC54 F0                DB  'P'+$A0
+EC55 AF                DB  'O'+$60
+EC56 B0                DB  'P'+$60       ; 77
+EC57 F4                DB  'T'+$A0
+EC58 B3                DB  'S'+$60
+EC59 A9                DB  'I'+$60
+EC5A AC                DB  'L'+$60       ; 76
+EC5B 60                DB  $60+CI00-CATS
+EC5C 8C                DB  ','+$60       ; 75
+EC5D 20                DB  $20+CI00-CATS
+EC5E B4                DB  'T'+$60
+EC5F B3                DB  'S'+$60
+EC60 A9                DB  'I'+$60
+EC61 AC       CAT1B    DB  'L'+$60       ; 74
+EC62 00                DB  $00           ; padding
+EC63 40                DB  $40           ; indicate end of category
+EC64 89                DB  ')'+$60       ; 73  forced mismatch
+EC65 C9       CAT11    DB  ')'+$A0       ; 72
+EC66 47                DB  $40+CI07-CATS
+EC67 9D                DB  '='+$60       ; 71
+EC68 17                DB  $00+CI17-CATS
+EC69 68                DB  $60+CI08-CATS
+EC6A 9D                DB  '='+$60       ; 70
+EC6B 0A       CAT18    DB  $00+CI0A-CATS
+EC6C 58                DB  $40+CI18-CATS
+EC6D 7B                DB  $60+CI1B-CATS
+EC6E 67                DB  $60+CI07-CATS
+EC6F A2                DB  'B'+$60
+EC70 A1                DB  'A'+$60
+EC71 B4                DB  'T'+$60
+EC72 B6                DB  'V'+$60       ; 6F
+EC73 67                DB  $60+CI07-CATS
+EC74 B4                DB  'T'+$60
+EC75 A1                DB  'A'+$60       ; 6E
+EC76 07                DB  $00+CI07-CATS
+EC77 8C                DB  ','+$60       ; 6D
+EC78 07                DB  $00+CI07-CATS
+EC79 AE                DB  'N'+$60
+EC7A A9                DB  'I'+$60
+EC7B AC                DB  'L'+$60
+EC7C B6                DB  'V'+$60       ; 6C
+EC7D 67                DB  $60+CI07-CATS
+EC7E B4                DB  'T'+$60
+EC7F A1                DB  'A'+$60       ; 6B
+EC80 07                DB  $00+CI07-CATS
+EC81 8C                DB  ','+$60       ; 6A
+EC82 07                DB  $00+CI07-CATS
+EC83 AE                DB  'N'+$60
+EC84 A9                DB  'I'+$60
+EC85 AC                DB  'L'+$60
+EC86 A8                DB  'H'+$60       ; 69
+EC87 67                DB  $60+CI07-CATS
+EC88 8C                DB  ','+$60       ; 68
+EC89 07                DB  $00+CI07-CATS
+EC8A B4                DB  'T'+$60
+EC8B AF                DB  'O'+$60
+EC8C AC                DB  'L'+$60
+EC8D B0                DB  'P'+$60       ; 67
+EC8E 67                DB  $60+CI07-CATS
+EC8F 9D                DB  '='+$60
+EC90 B2                DB  'R'+$60
+EC91 AF                DB  'O'+$60
+EC92 AC                DB  'L'+$60
+EC93 AF                DB  'O'+$60
+EC94 A3                DB  'C'+$60       ; 66
+EC95 67                DB  $60+CI07-CATS
+EC96 8C                DB  ','+$60       ; 65
+EC97 07                DB  $00+CI07-CATS
+EC98 A5                DB  'E'+$60
+EC99 AB                DB  'K'+$60
+EC9A AF                DB  'O'+$60
+EC9B B0                DB  'P'+$60       ; 64
+EC9C F4                DB  'T'+$A0
+EC9D AE                DB  'N'+$60
+EC9E A9                DB  'I'+$60
+EC9F B2                DB  'R'+$60
+ECA0 B0                DB  'P'+$60       ; 63
+ECA1 7F                DB  $7F
+ECA2 0E                DB  $00+CI0E-CATS
+ECA3 27                DB  $20+CI07-CATS
+ECA4 B4                DB  'T'+$60
+ECA5 AE                DB  'N'+$60
+ECA6 A9                DB  'I'+$60
+ECA7 B2                DB  'R'+$60
+ECA8 B0                DB  'P'+$60       ; 62
+ECA9 7F                DB  $7F
+ECAA 0E                DB  $00+CI0E-CATS
+ECAB 28                DB  $20+CI08-CATS
+ECAC B4                DB  'T'+$60
+ECAD AE                DB  'N'+$60
+ECAE A9                DB  'I'+$60
+ECAF B2                DB  'R'+$60
+ECB0 B0                DB  'P'+$60       ; 61
+ECB1 64                DB  $60+CI04-CATS
+ECB2 07                DB  $00+CI07-CATS
+ECB3 A6                DB  'F'+$60
+ECB4 A9                DB  'I'+$60       ; 60
+ECB5 67                DB  $60+CI07-CATS
+ECB6 AF                DB  'O'+$60
+ECB7 B4                DB  'T'+$60
+ECB8 AF                DB  'O'+$60
+ECB9 A7                DB  'G'+$60       ; 5F
+ECBA 78                DB  $60+CI18-CATS
+ECBB B4                DB  'T'+$60
+ECBC A5                DB  'E'+$60
+ECBD AC                DB  'L'+$60       ; 5E
+ECBE 6B                DB  $60+CI0B-CATS
+ECBF 7F                DB  $7F
+ECC0 02                DB  $02           ; special "REM character" syntax
+ECC1 AD                DB  'M'+$60
+ECC2 A5                DB  'E'+$60
+ECC3 B2       CAT1A    DB  'R'+$60       ; 5D
+ECC4 67                DB  $60+CI07-CATS ; "rises" thru
+ECC5 A2                DB  'B'+$60
+ECC6 B5                DB  'U'+$60
+ECC7 B3                DB  'S'+$60
+ECC8 AF                DB  'O'+$60
+ECC9 A7                DB  'G'+$60       ; 5C
+ECCA EE                DB  'N'+$A0
+ECCB B2                DB  'R'+$60
+ECCC B5                DB  'U'+$60
+ECCD B4                DB  'T'+$60
+ECCE A5                DB  'E'+$60
+ECCF B2                DB  'R'+$60       ; 5B
+ECD0 7E                DB  $7E
+ECD1 8C                DB  ','+$60       ; 5A
+ECD2 39                DB  $20+CI19-CATS
+ECD3 B4                DB  'T'+$60
+ECD4 B8                DB  'X'+$60
+ECD5 A5                DB  'E'+$60
+ECD6 AE                DB  'N'+$60       ; 59
+ECD7 67                DB  $60+CI07-CATS
+ECD8 B0                DB  'P'+$60
+ECD9 A5                DB  'E'+$60
+ECDA B4                DB  'T'+$60
+ECDB B3                DB  'S'+$60       ; 58
+ECDC 27                DB  $20+CI07-CATS
+ECDD AF                DB  'O'+$60
+ECDE B4                DB  'T'+$60       ; 57
+ECDF 07                DB  $00+CI07-CATS
+ECE0 9D                DB  '='+$60       ; 56
+ECE1 19                DB  $00+CI19-CATS
+ECE2 B2                DB  'R'+$60
+ECE3 AF                DB  'O'+$60
+ECE4 A6                DB  'F'+$60       ; 55
+ECE5 7F                DB  $7F
+ECE6 05                DB  $00+CI05-CATS
+ECE7 37                DB  $20+CI17-CATS
+ECE8 B4                DB  'T'+$60
+ECE9 B5                DB  'U'+$60
+ECEA B0                DB  'P'+$60
+ECEB AE                DB  'N'+$60
+ECEC A9                DB  'I'+$60       ; 54
+ECED 7F                DB  $7F
+ECEE 05                DB  $00+CI05-CATS
+ECEF 28                DB  $20+CI08-CATS
+ECF0 B4                DB  'T'+$60
+ECF1 B5                DB  'U'+$60
+ECF2 B0                DB  'P'+$60
+ECF3 AE                DB  'N'+$60
+ECF4 A9                DB  'I'+$60       ; 53
+ECF5 7F                DB  $7F
+ECF6 05                DB  $00+CI05-CATS
+ECF7 2A                DB  $20+CI0A-CATS
+ECF8 B4                DB  'T'+$60
+ECF9 B5                DB  'U'+$60
+ECFA B0                DB  'P'+$60
+ECFB AE                DB  'N'+$60
+ECFC A9                DB  'I'+$60       ; 52
+ECFD E4                DB  'D'+$A0
+ECFE AE                DB  'N'+$60
+ECFF A5       CAT02    DB  'E'+$60       ; 51
+ED00 00       LED00    DB  $00
+ED01 47                DB  $40+CI07-CATS
+ED02 A2                DB  'B'+$60
+ED03 A1                DB  'A'+$60
+ED04 B4                DB  'T'+$60       ; 50
+ED05 7F                DB  $7F
+ED06 0D                DB  $00+CI0D-CATS
+ED07 30                DB  $20+CI10-CATS
+ED08 AD                DB  'M'+$60
+ED09 A9                DB  'I'+$60
+ED0A A4                DB  'D'+$60       ; 4F
+ED0B 7F                DB  $7F
+ED0C 0D                DB  $00+CI0D-CATS
+ED0D 23                DB  $20+CI03-CATS
+ED0E AD                DB  'M'+$60
+ED0F A9                DB  'I'+$60
+ED10 A4                DB  'D'+$60       ; 4E
+ED11 67                DB  $60+CI07-CATS
+ED12 AC                DB  'L'+$60
+ED13 AC                DB  'L'+$60
+ED14 A1                DB  'A'+$60
+ED15 A3                DB  'C'+$60       ; 4D
+ED16 F2                DB  'R'+$A0
+ED17 A7                DB  'G'+$60       ; 4C
+ED18 F4                DB  'T'+$A0
+ED19 B8                DB  'X'+$60
+ED1A A5                DB  'E'+$60
+ED1B B4       CAT0B    DB  'T'+$60       ; 4B
+ED1C 00                DB  $00           ; padding
+ED1D 4D                DB  $40+CI0D-CATS ; forced mismatch (end of category)
+ED1E CC                DB  ','+$A0       ; 4A
+ED1F 67                DB  $60+CI07-CATS
+ED20 8C                DB  ','+$60       ; 49
+ED21 68                DB  $60+CI08-CATS
+ED22 8C                DB  ','+$60       ; 48
+ED23 DB                DB  ';'+$A0       ; 47
+ED24 67                DB  $60+CI07-CATS
+ED25 9B                DB  ';'+$60       ; 46
+ED26 68                DB  $60+CI08-CATS
+ED27 9B       CAT0E    DB  ';'+$60       ; 45
+ED28 50                DB  $40+CI10-CATS
+ED29 8C                DB  ','+$60       ; 44
+ED2A 63                DB  $60+CI03-CATS
+ED2B 8C       CAT0D    DB  ','+$60       ; 43
+ED2C 7F                DB  $7F
+ED2D 01       CAT0C    DB  $01           ; special "string literal char" syntax
+ED2E 51                DB  $40+CI11-CATS
+ED2F 07                DB  $00+CI07-CATS
+ED30 88                DB  '('+$60 ; 42
+ED31 29       CAT0A    DB  $20+CI09-CATS
+ED32 84                DB  '$'+$60
+ED33 80                DB  ' '+$60       ; 41  forced mismatch
+ED34 C4                DB  '$'+$A0       ; 40
+ED35 19       CAT09    DB  $00+CI19-CATS
+ED36 57                DB  $40+CI17-CATS
+ED37 71                DB  $60+CI11-CATS
+ED38 07                DB  $00+CI07-CATS
+ED39 88                DB  '('+$60       ; 3F
+ED3A 14                DB  $00+CI14-CATS
+ED3B 71                DB  $60+CI11-CATS
+ED3C 07                DB  $00+CI07-CATS
+ED3D 8C                DB  ','+$60       ; 3E
+ED3E 07                DB  $00+CI07-CATS
+ED3F 88                DB  '('+$60
+ED40 AE                DB  'N'+$60
+ED41 B2                DB  'R'+$60
+ED42 A3                DB  'C'+$60
+ED43 B3                DB  'S'+$60       ; 3D
+ED44 71                DB  $60+CI11-CATS
+ED45 08                DB  $00+CI08-CATS
+ED46 88                DB  '('+$60
+ED47 A3                DB  'C'+$60
+ED48 B3                DB  'S'+$60
+ED49 A1                DB  'A'+$60       ; 3C
+ED4A 71                DB  $60+CI11-CATS
+ED4B 08                DB  $00+CI08-CATS
+ED4C 88                DB  '('+$60
+ED4D AE                DB  'N'+$60
+ED4E A5                DB  'E'+$60
+ED4F AC                DB  'L'+$60       ; 3B
+ED50 68                DB  $60+CI08-CATS
+ED51 83                DB  '#'+$60       ; 3A
+ED52 08                DB  $00+CI08-CATS
+ED53 68                DB  $60+CI08-CATS
+ED54 9D                DB  '='+$60       ; 39
+ED55 08                DB  $00+CI08-CATS
+ED56 71                DB  $60+CI11-CATS
+ED57 07                DB  $00+CI07-CATS
+ED58 88                DB  '('+$60       ; 38
+ED59 60       CAT16    DB  $60+CI00-CATS
+ED5A 75                DB  $60+CI15-CATS ; "rises" thru
+ED5B B4                DB  'T'+$60
+ED5C AF                DB  'O'+$60
+ED5D AE                DB  'N'+$60       ; 37
+ED5E 75                DB  $60+CI15-CATS
+ED5F 8D                DB  '-'+$60       ; 36
+ED60 75                DB  $60+CI15-CATS
+ED61 8B       CAT15    DB  '+'+$60       ; 35
+ED62 51                DB  $40+CI11-CATS
+ED63 07                DB  $00+CI07-CATS
+ED64 88                DB  '('+$60       ; 34
+ED65 19       CAT10    DB  $00+CI19-CATS
+ED66 B8                DB  'X'+$60
+ED67 A4                DB  'D'+$60
+ED68 AE                DB  'N'+$60
+ED69 B2                DB  'R'+$60       ; 33  forced mismatch
+ED6A EC                DB  'L'+$A0
+ED6B A4                DB  'D'+$60
+ED6C B0                DB  'P'+$60       ; 32
+ED6D F3                DB  'S'+$A0
+ED6E A2                DB  'B'+$60
+ED6F A1                DB  'A'+$60       ; 31
+ED70 EE                DB  'N'+$A0
+ED71 A7                DB  'G'+$60
+ED72 B3                DB  'S'+$60       ; 30
+ED73 E4                DB  'D'+$A0
+ED74 AE                DB  'N'+$60
+ED75 B2                DB  'R'+$60       ; 2F
+ED76 EB                DB  'K'+$A0
+ED77 A5                DB  'E'+$60
+ED78 A5                DB  'E'+$60
+ED79 B0       CAT14    DB  'P'+$60       ; 2E
+ED7A 51                DB  $40+CI11-CATS
+ED7B 07                DB  $00+CI07-CATS
+ED7C 88                DB  '('+$60       ; 2D
+ED7D 39       CAT17    DB  $20+CI19-CATS
+ED7E 81                DB  '!'+$60       ; 2C  forced mismatch
+ED7F C1       CAT0F    DB  '!'+$A0       ; 2B
+ED80 4F                DB  $40+CI0F-CATS ; forced mismatch (end of category)
+ED81 7F                DB  $7F           ;
+ED82 0F                DB  $00+CI0F-CATS
+ED83 2F       CAT00    DB  $20+CI0F-CATS
+ED84 00                DB  $00           ; padding
+ED85 51                DB  $40+CI11-CATS
+ED86 06                DB  $00+CI06-CATS
+ED87 88                DB  '('+$60       ; 2A
+ED88 29                DB  $20+CI09-CATS
+ED89 C2                DB  '"'+$A0       ; 29
+ED8A 0C                DB  $00+CI0C-CATS
+ED8B 82       CAT08    DB  '"'+$60       ; 28
+ED8C 57                DB  $40+CI17-CATS
+ED8D 8C                DB  ','+$60       ; 27
+ED8E 6A                DB  $60+CI0A-CATS
+ED8F 8C       CAT05    DB  ','+$60       ; 26
+ED90 42                DB  $40+CI02-CATS
+ED91 AE                DB  'N'+$60
+ED92 A5                DB  'E'+$60
+ED93 A8                DB  'H'+$60
+ED94 B4                DB  'T'+$60       ; 25
+ED95 60                DB  $60+CI07-CATS
+ED96 AE                DB  'N'+$60
+ED97 A5                DB  'E'+$60
+ED98 A8                DB  'H'+$60
+ED99 B4       CAT04    DB  'T'+$60       ; 24
+ED9A 4F                DB  $40+CI0F-CATS ; forced mismatch (end of category)
+ED9B 7E                DB  $7E
+ED9C 1E                DB  $00+CI1E-CATS
+ED9D 35       CAT07    DB  $20+CI15-CATS
+ED9E 8C                DB  ','+$60       ; 23  "rises" thru
+ED9F 27       CAT06    DB  $20+CI07-CATS
+EDA0 51                DB  $40+CI11-CATS
+EDA1 07                DB  $00+CI07-CATS
+EDA2 88                DB  '('+$60       ; 22
+EDA3 09       CAT03    DB  $00+CI09-CATS
+EDA4 8B                DB  '+'+$60       ; 21  forced mismatch
+EDA5 FE                DB  '^'+$A0       ; 20
+EDA6 E4                DB  'D'+$A0
+EDA7 AF                DB  'O'+$60
+EDA8 AD                DB  'M'+$60       ; 1F
+EDA9 F2                DB  'R'+$A0
+EDAA AF                DB  'O'+$60       ; 1E
+EDAB E4                DB  'D'+$A0
+EDAC AE                DB  'N'+$60
+EDAD A1                DB  'A'+$60       ; 1D
+EDAE DC                DB  '<'+$A0       ; 1C
+EDAF DE                DB  '>'+$A0
+EDB0 9C                DB  '<'+$60       ; 1B
+EDB1 DD                DB  '='+$A0
+EDB2 9C                DB  '<'+$60       ; 1A
+EDB3 DE                DB  '>'+$A0       ; 19
+EDB4 DD                DB  '='+$A0
+EDB5 9E                DB  '>'+$60       ; 18
+EDB6 C3                DB  '#'+$A0       ; 17
+EDB7 DD                DB  '='+$A0       ; 16
+EDB8 CF                DB  '/'+$A0       ; 15
+EDB9 CA                DB  '*'+$A0       ; 14
+EDBA CD                DB  '-'+$A0       ; 13
+EDBB CB       CAT1E    DB  '+'+$A0       ; 12
+EDBC 00                DB  $00           ; padding
+EDBD 47                DB  $40+CI07-CATS
+EDBE 9A                DB  ':'+$60
+EDBF AD                DB  'M'+$60
+EDC0 A5                DB  'E'+$60
+EDC1 AD                DB  'M'+$60
+EDC2 AF                DB  'O'+$60
+EDC3 AC                DB  'L'+$60       ; 11
+EDC4 67                DB  $60+CI07-CATS
+EDC5 9A                DB  ':'+$60
+EDC6 AD                DB  'M'+$60
+EDC7 A5                DB  'E'+$60
+EDC8 AD                DB  'M'+$60
+EDC9 A9                DB  'I'+$60
+EDCA A8                DB  'H'+$60       ; 10
+EDCB EE                DB  'N'+$A0
+EDCC A1                DB  'A'+$60
+EDCD AD                DB  'M'+$60       ; 0F
+EDCE 60                DB  $60+CI00-CATS
+EDCF 8C                DB  ','+$60       ; 0E
+EDD0 20                DB  $20+CI00-CATS
+EDD1 AF                DB  'O'+$60
+EDD2 B4                DB  'T'+$60
+EDD3 B5                DB  'U'+$60
+EDD4 A1                DB  'A'+$60       ; 0D
+EDD5 F2                DB  'R'+$A0
+EDD6 AC                DB  'L'+$60
+EDD7 A3                DB  'C'+$60       ; 0C
+EDD8 F7                DB  'W'+$A0
+EDD9 A5                DB  'E'+$60
+EDDA AE                DB  'N'+$60       ; 0B
+EDDB 60                DB  $60+CI00-CATS
+EDDC 8C                DB  ','+$60       ; 0A
+EDDD 20                DB  $20+CI00-CATS
+EDDE AC                DB  'L'+$60
+EDDF A5                DB  'E'+$60
+EDE0 A4                DB  'D'+$60       ; 09
+EDE1 EE                DB  'N'+$A0
+EDE2 B5                DB  'U'+$60
+EDE3 B2                DB  'R'+$60       ; 08
+EDE4 60                DB  $60+CI00-CATS
+EDE5 AE                DB  'N'+$60
+EDE6 B5                DB  'U'+$60
+EDE7 B2                DB  'R'+$60       ; 07
+EDE8 EE                DB  'N'+$A0
+EDE9 AF                DB  'O'+$60
+EDEA A3                DB  'C'+$60       ; 06
+EDEB E5                DB  'E'+$A0
+EDEC B6                DB  'V'+$60
+EDED A1                DB  'A'+$60
+EDEE B3                DB  'S'+$60       ; 05
+EDEF E4                DB  'D'+$A0
+EDF0 A1                DB  'A'+$60
+EDF1 AF                DB  'O'+$60
+EDF2 AC                DB  'L'+$60       ; 04
+EDF3 7A                DB  $60+CI1A-CATS
+EDF4 7E                DB  $7E
+EDF5 9A                DB  ':'+$60       ; 03
+EDF6 22                DB  $20+CI02-CATS
+EDF7 20       CAT1F    DB  $20+CI00-CATS
+EDF8 00                DB  $00
+EDF9 60                DB  $60           ; indicate the end of this rule
+EDFA 03                DB  $03
+EDFB BF                DB  '_'+$60       ; 02  empty line (0 or more spcs & CR)
+EDFC 60                DB  $60           ; indicate the end of this rule
+EDFD 03                DB  $03
+EDFE BF                DB  '_'+$60       ; 01
+EDFF 1F       LEDFF    DB  $00+CI1F-CATS ; "entry" point
+
+                       ORG $F197
+F197          CATS
+F197 C1       CI00     DB  (CAT00-CAT)/2 ; ---   numbers (without signs)
+F198 00                DB  (CAT01-CAT)/2 ; ---   unused
+F199 7F       CI02     DB  (CAT02-CAT)/2 ; 51-5C all valid deferred stmnts
+F19A D1       CI03     DB  (CAT03-CAT)/2 ; 22    DIM string clause: DIM A$(3)
+F19B CC       CI04     DB  (CAT04-CAT)/2 ; 24-25 THEN clauses
+F19C C7       CI05     DB  (CAT05-CAT)/2 ; 26-27 INPUT comma clauses
+F19D CF       CI06     DB  (CAT06-CAT)/2 ; 23    substring exp: A,B
+F19E CE       CI07     DB  (CAT07-CAT)/2 ; ---   all numeric expressions
+F19F C5       CI08     DB  (CAT08-CAT)/2 ; 28-2A all string expressions
+F1A0 9A       CI09     DB  (CAT09-CAT)/2 ; 40-41 string variable name
+F1A1 98       CI0A     DB  (CAT0A-CAT)/2 ; 42    str var to store in: A$="B"
+                                         ;       or C$(2)="D" or INPUT E$ or
+                                         ;       INPUT F$(3)
+F1A2 8D       CI0B     DB  (CAT0B-CAT)/2 ; 4B-50 statements (def or imm)
+F1A3 96       CI0C     DB  (CAT0C-CAT)/2 ; ---   string literal characters
+F1A4 95       CI0D     DB  (CAT0D-CAT)/2 ; 43-44 DIM comma clauses
+F1A5 93       CI0E     DB  (CAT0E-CAT)/2 ; 45-4A PRINT , and ; clauses
+F1A6 BF       CI0F     DB  (CAT0F-CAT)/2 ; 2B-2C digits
+F1A7 B2       CI10     DB  (CAT10-CAT)/2 ; 34    DIM num var clause: DIM A(2)
+F1A8 32       CI11     DB  (CAT11-CAT)/2 ; 72-73 right parenthesis
+F1A9 12       CI12     DB  (CAT12-CAT)/2 ; 81    nums separated by commas
+F1AA 0F       CI13     DB  (CAT13-CAT)/2 ; 82-83 numbers (with signs)
+F1AB BC       CI14     DB  (CAT14-CAT)/2 ; 2E-33 num function names: fn(A)
+F1AC B0       CI15     DB  (CAT15-CAT)/2 ; 35-37 +exp, -exp, or NOT exp
+F1AD AC                DB  (CAT16-CAT)/2 ; 38-3F exprs with num results
+F1AE BE       CI17     DB  (CAT17-CAT)/2 ; 2D    num var to store in: A=1 or
+                                         ;       B(2)=3 or INPUT C,D(4)
+F1AF 35       CI18     DB  (CAT18-CAT)/2 ; 70-71 LET clause: A=1 or A$="A"
+F1B0 0C       CI19     DB  (CAT19-CAT)/2 ; 84    (numeric) variable name
+F1B1 61       CI1A     DB  (CAT1A-CAT)/2 ; 5D-6F valid def & imm statements
+F1B2 30       CI1B     DB  (CAT1B-CAT)/2 ; 74-7F statements (def or imm)
+F1B3 10       CI1C     DB  (CAT1C-CAT)/2 ; ---   variable name character
+F1B4 0B       CI1D     DB  (CAT1D-CAT)/2 ; 85-8B used to find a keyword after
+                                         ;       a number variable name: e.g.
+                                         ;       the MOD in A MOD 2
+F1B5 DD       CI1E     DB  (CAT1E-CAT)/2 ; 12-21 num operator names: A op B
+F1B6 FB       CI1F     DB  (CAT1F-CAT)/2 ; 03-11 valid input at > prompt

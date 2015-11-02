@@ -1,0 +1,47 @@
+<table border='1' cellpadding='2' bgcolor='#FFFFDF' bordercolor='#E8B900' align='center'><tr><td><font face='Arial' size='2' color='#000000'><b>This website was set to be removed for inactivity by <a href='http://www.000webhost.com/'>www.000webhost.com</a>. If you own this website, <a href='http://www.000webhost.com/protect-website'>click here</a> to protect it.</b></font></td></tr></table><br /><html><head><title>65org16 Tiny BASIC</title></head><body>
+<h1>External links</h1>
+<ul>
+<li><a href="http://ittybittycomputers.com/IttyBitty/TinyBasic/index.htm">Tom Pittman's Tiny BASIC site</a></li>
+</ul>
+<p>Tiny BASIC is a dialect of the BASIC programming language, designed to
+fit into a small amount of memory. Please visit Tom Pittman's Tiny BASIC
+site for documentation. In particular, the User Manual describes
+installation. The Experimenter's Kit is also quite helpful.</p>
+<h1>Download</h1>
+<ul>
+<li><a href="TBO16.ASM">Tiny BASIC for the 65org16</a> (assemble with HXA)</li>
+<li><a href="HXA2DEV.SED">sed script to convert source code to dev65 syntax</a></li>
+</ul>
+<h1>Installation</h1>
+<p>At minimum, you will need to supply an input and an output routine. (See
+the User Manual for more information.) The output routine simply outputs the
+character in the accumulator. The input routine simply waits for a keypress
+and returns it in the accumulator. Note that input characters are not
+echoed. Furthermore, Tiny BASIC outputs many control characters (e.g. NUL,
+XON, XOFF). The input and output routines I use are:</p>
+<pre>
+TB_INPUT  JSR INPUT
+          CMP #$0D
+          BEQ TBI1
+          JSR OUTPUT
+TBI1      RTS
+
+TB_OUTPUT PHA
+          AND #$7F
+          CMP #$0A
+          BEQ TBO1
+          CMP #$0D
+          BEQ TBO1
+          CMP #$20
+          BCC TBO2
+          CMP #$7F
+          BCS TBO2
+TBO1      JSR OUTPUT
+TBO2      PLA
+          RTS
+</pre>
+</body></html>
+
+<!-- Hosting24 Analytics Code -->
+<script type="text/javascript" src="http://stats.hosting24.com/count.php"></script>
+<!-- End Of Analytics Code -->

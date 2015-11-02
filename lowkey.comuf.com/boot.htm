@@ -1,0 +1,81 @@
+<table border='1' cellpadding='2' bgcolor='#FFFFDF' bordercolor='#E8B900' align='center'><tr><td><font face='Arial' size='2' color='#000000'><b>This website was set to be removed for inactivity by <a href='http://www.000webhost.com/'>www.000webhost.com</a>. If you own this website, <a href='http://www.000webhost.com/protect-website'>click here</a> to protect it.</b></font></td></tr></table><br /><html><head><title>6502 software: Bootstrap</title><style type="text/css">pre { border: solid; padding: 1em }</style></head><body>
+<h1>Introduction</h1>
+<p>The bootstrap code is a minimal routine designed to establish some common
+ground so that more substantial routines can be loaded in a common way.
+It's short enough that the assembler syntax can be converted manually.
+If nothing else, you can just use a DB assembler directive, or a monitor
+utility to enter the object code directly.  The first 6 bytes and the stuff
+after the RTS are relocation info which can be omitted.</p>
+<h1>How to use it</h1>
+<p>To use this routine, you only need 3 consectutive zero page locations
+available.  Use the X register to indicate which zero page locations to use.
+For example, to use $12, $13, and $14, enter with X = $12.  The bootstrap
+code loads the routine at the address pointed to by 0,X (lo byte) and 1,X (hi
+byte).  In fact, the bootstrap code only increments the low byte but not the
+high byte, so setting the low byte to zero (i.e. loading at a page boundary)
+is advised.  2,X is used only for temporary storage and does not need to be
+initialized.  Note that the entry point is actually at the LDA #$40
+instruction.  The "get" routine is the input routine, which should return a
+character in the accumulator.  You can put a JMP at address 0 or you can
+patch the address in the source code manually.<p>
+<h1>How it works</h1>
+<p>Characters below ASCII 33 are ignored, so the bootstrap code is somewhat
+fault tolerant, as spaces are ignored and line ending differences (i.e. LF
+vs. CR. vs. CRLF) are irrelevant.  A ! character (ASCII 33) indicates the
+end of data.  A byte whose bits are %abcdefgh is represented as two
+printable ASCII characters whose bits are:</p>
+<ul>
+<li>%0a1c1e0g XOR %00010100
+<li>%0b1d1f0h XOR %01010000
+</ul>
+<p>This corresponds to the characters: (),-89&lt;=hilmxy|}</p>
+<h1>Source and object code</h1>
+<pre>
+                 [ 10 @ 'BPL'                             ]
+                 [ 20 @ 'JSR'                             ]
+                 [ 30 @ 'BMI'                             ]
+                 [ 60 @ 'RTS'                             ]
+                 [ 90 @ 'BCC'                             ]
+                 [ D0 @ 'BNE'                             ]
+                 [ 81 @ 'STA ,X)'                         ]
+                 [ 55 @ 'EOR ,X'                          ]
+                 [ 95 @ 'STA ,X'                          ]
+                 [ 16 @ 'ASL ,X'                          ]
+                 [ F6 @ 'INC ,X'                          ]
+                 [ A9 @ 'LDA #'                           ]
+                 [ C9 @ 'CMP #'                           ]
+                 [                                        ]
+                 [ 0000 @ 'get'                           ]
+                 [                                        ]
+                 [ 00 @ 'ADDRESS'                         ]
+                 [ 02 @ 'BYTE'                            ]
+                 [                                        ]
+                 [ 1000 @                                 ]
+                 [                                        ]
+(10,04,         )[      'BPL',00*,                        ]
+(30,02,         )[      'BMI',02*,                        ]
+(18,00,         )[      (DW) 0018,, (RELDATA-PROGRAM)     ]
+                 [ 00=&gt;02=&gt;                               ]
+                 [ (PROGRAM)                              ]
+(16,02,         )[ 00*  'ASL ,X','BYTE',                  ]
+(55,02,         )[      'EOR ,X','BYTE',                  ]
+(90,06,         )[      'BCC',02*,                        ]
+(81,00,         )[      'STA ,X)','ADDRESS',              ]
+(F6,00,         )[      'INC ,X','ADDRESS',               ]
+(A9,40,         )[      'LDA #',40,        (entry point)  ]
+(95,02,         )[ 02=&gt; 'STA ,X','BYTE',                  ]
+(20,00,00,      )[ 04*  'JSR','get',,                     ]
+(C9,21,         )[      'CMP #',21,                       ]
+(90,F9,         )[      'BCC',04=&lt;                        ]
+(D0,E9,         )[      'BNE',00=&lt;                        ]
+(60,            )[      'RTS',                            ]
+                 [ (RELDATA)                              ]
+(03,0F,00,00,00,)[      (DB) 03, (DW) 000F,, (DW) 'get',, ]
+(00,            )[      (DB) 00,                          ]
+(Q              )[ _                                      ]
+</pre>
+</body></html>
+
+<!-- Hosting24 Analytics Code -->
+<script type="text/javascript" src="http://stats.hosting24.com/count.php"></script>
+<!-- End Of Analytics Code -->

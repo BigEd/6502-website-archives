@@ -1,0 +1,363 @@
+<table border='1' cellpadding='2' bgcolor='#FFFFDF' bordercolor='#E8B900' align='center'><tr><td><font face='Arial' size='2' color='#000000'><b>This website was set to be removed for inactivity by <a href='http://www.000webhost.com/'>www.000webhost.com</a>. If you own this website, <a href='http://www.000webhost.com/protect-website'>click here</a> to protect it.</b></font></td></tr></table><br /><html><head><title>6502 software: "Hex" files</title><style type="text/css">pre { border: solid; padding: 1em }</style></head><body>
+<h1>Introduction</h1>
+<p>Intel .hex and Motorola S-record files are similar standard file formats
+which can be very useful, but they do have a couple of limitations.  For
+example, consider an 8192 byte trig table that could be loaded anywhere.
+Generating this file in one these standard formats means you must specify a
+load address.  Changing the load address generally means generating a new
+file (assuming you have the program that generated it in the first place!),
+since editing it manually is very tedious.  (Each line, typically containing 
+16 or 32 bytes of data, has both an address and a checksum.)  Another
+limitation is due to their line-and-field-oriented nature.  Addresses widths
+are fixed, due to the field widths being fixed and you must use an exteneded
+version of these formats for larger address sizes.</p>
+<h1>An alternate format</h1>
+<p>Here is an alternate format with the following features:</p>
+<ul>
+<li>Free-form (whitespace is ignored, line ending differences are
+irrelevant)</li>
+<li>Addresses need only be specified once for a contiguous block of data</li>
+<li>There is a provision for comments and comments can be nested (this makes
+it trivial to "comment out" sections of data)</li>
+<li>Letters (hex digits) are case-insensitive</li>
+<li>There are no checksums to maintain (see the footnote for rationale)</li>
+</ul>
+<p>The characters used are:</p>
+<ul>
+<li>0-9A-Fa-f hex digit: number = number * 16 + digit</li>
+<li>Qq end of data</li>
+<li>, store number, increment address, reset number to 0</li>
+<li>@ set address to number, reset number to 0</li>
+<li>[ start comment</li>
+<li>] end comment </li>
+</ul>
+<p>The "number" (variable) is initialized to 0.  This (along with the "reset
+number to zero") rules above mean that you can omit leading zeros.  (Or
+omit all digits if the number is zero, i.e. 1,,2, is equivalent to 1,0,2,
+though your humble author prefers to use the former form only to indicate a
+"don't care" value rather than a zero value.)</p>
+<p>Note that you can have an (or more than one) embedded [ or ] in a
+comment, by manually balancing the brackets at the beginning or end of the
+comment.  For example:
+<pre>
+[ a comment with a [ embedded ]]
+[[ a comment with a ] embedded ]
+</pre>
+<h1>How to use it</h1>
+<p>To use it, as with the bootstrap code, use the X register to specify
+which zero page locations to use.  You may initialize the (16-bit) address
+variable to a default value if you wish, but none of the zero page locations
+is required to be initialized.  Again the first 6 bytes and the data after
+the RTS are relocation info that can be omitted.  As with the bootstrap
+code, the "get" routine is an input routine that should return one character
+in the accumulator.  It is called in only one place, so it could even be
+patched manually if necessary.</p>
+<h1>Source and object code</h1>
+<p>Here is the object code in "bootstrap encoded" form:</p>
+<pre>
+&lt;h&lt;|,h=x9)&lt;xx(lx&lt;xxh|m=y|m=xxhx98-l(=yx8l(98,x&lt;x&lt;xx99)l(m,xx|(i=
+x9(||(8|lm=x|y&lt;xm,&lt;x|(x-m,&lt;ylhx)x9&lt;8|(9xlm=x|m&lt;xlm=y|m&lt;ylhy989,h
+x99x|h9|8y,xx9,9l(=l(9xxx9i(|hil(y9}lx&lt;|=l=x-l=yxx|(h)&lt;m=x8h|hh|
+,8=y&lt;i&lt;x&lt;x&lt;x&lt;x!
+</pre>
+<p>Here is the source and object code:</p>
+<pre>
+                 [ 10 @ 'BPL'                             ]
+                 [ 20 @ 'JSR'                             ]
+                 [ 30 @ 'BMI'                             ]
+                 [ 60 @ 'RTS'                             ]
+                 [ 90 @ 'BCC'                             ]
+                 [ A0 @ 'LDY #'                           ]
+                 [ B0 @ 'BCS'                             ]
+                 [ D0 @ 'BNE'                             ]
+                 [ F0 @ 'BEQ'                             ]
+                 [ 81 @ 'STA ,X)'                         ]
+                 [ 94 @ 'STY ,X'                          ]
+                 [ 15 @ 'ORA ,X'                          ]
+                 [ 95 @ 'STA ,X'                          ]
+                 [ B5 @ 'LDA ,X'                          ]
+                 [ 16 @ 'ASL ,X'                          ]
+                 [ 36 @ 'ROL ,X'                          ]
+                 [ F6 @ 'INC ,X'                          ]
+                 [ 18 @ 'CLC'                             ]
+                 [ 88 @ 'DEY'                             ]
+                 [ 98 @ 'TYA'                             ]
+                 [ C8 @ 'INY'                             ]
+                 [ D8 @ 'CLD'                             ]
+                 [ 09 @ 'ORA #'                           ]
+                 [ 29 @ 'AND #'                           ]
+                 [ 49 @ 'EOR #'                           ]
+                 [ 69 @ 'ADC #'                           ]
+                 [ C9 @ 'CMP #'                           ]
+                 [                                        ]
+                 [ 0000 @ 'get'                           ]
+                 [                                        ]
+                 [ 00 @ 'ADDRESS'                         ]
+                 [ 01 @ 'ADDRESS+1'                       ]
+                 [ 02 @ 'NUMBERL'                         ]
+                 [ 03 @ 'NUMBERH'                         ]
+                 [                                        ]
+                 [ 1000 @                                 ]
+                 [                                        ]
+(10,04,         )[      'BPL',00*,                        ]
+(30,02,         )[      'BMI',02*,                        ]
+(5B,00,         )[      (DW) 005B,, (RELDATA-PROGRAM)     ]
+                 [ 00=&gt;02=&gt;                               ]
+                 [ (PROGRAM)                              ]
+(D8,            )[      'CLD',                            ]
+(A0,00,         )[      'LDY #',00,                       ]
+(98,            )[ 00*  'TYA',                            ]
+(95,03,         )[      'STA ,X','NUMBERH',               ]
+(95,02,         )[ 02*  'STA ,X','NUMBERL',               ]
+(98,            )[ 04*  'TYA',                            ]
+(C9,5D,         )[ 06*  'CMP #',5D,                       ]
+(F0,03,         )[      'BEQ',0A*,                        ]
+(C8,            )[ 08*  'INY',                            ]
+(F0,4A,         )[      'BEQ',14*,                        ]
+(20,00,00,      )[ 0A=&gt; 'JSR','get',,                     ]
+(C9,5B,         )[      'CMP #',5B,                       ]
+(F0,F6,         )[      'BEQ',08=&lt;                        ]
+(88,            )[      'DEY',                            ]
+(D0,EF,         )[      'BNE',06=&lt;                        ]
+(C9,2C,         )[      'CMP #',2C,                       ]
+(D0,0C,         )[      'BNE',0C*,                        ]
+(B5,02,         )[      'LDA ,X','NUMBERL',               ]
+(81,00,         )[      'STA ,X)','ADDRESS',              ]
+(F6,00,         )[      'INC ,X','ADDRESS',               ]
+(D0,DD,         )[      'BNE',00=&lt;                        ]
+(F6,01,         )[      'INC ,X','ADDRESS+1',             ]
+(B0,D9,         )[      'BCS',00=&lt;                        ]
+(C9,40,         )[ 0C=&gt; 'CMP #',40,                       ]
+(D0,0A,         )[      'BNE',0E*,                        ]
+(B5,02,         )[      'LDA ,X','NUMBERL',               ]
+(95,00,         )[      'STA ,X','ADDRESS',               ]
+(B5,03,         )[      'LDA ,X','NUMBERH',               ]
+(95,01,         )[      'STA ,X','ADDRESS+1',             ]
+(B0,CB,         )[      'BCS',00=&lt;                        ]
+(49,30,         )[ 0E=&gt; 'EOR #',30,                       ]
+(C9,0A,         )[      'CMP #',0A,                       ]
+(90,0E,         )[      'BCC',10*,                        ]
+(09,20,         )[      'ORA #',20,                       ]
+(C9,61,         )[      'CMP #',61,                       ]
+(F0,16,         )[      'BEQ',16*,                        ]
+(69,88,         )[      'ADC #',88,                       ]
+(C9,FA,         )[      'CMP #',FA,                       ]
+(90,BE,         )[      'BCC',04=&lt;                        ]
+(29,0F,         )[      'AND #',0F,                       ]
+(A0,04,         )[ 10=&gt; 'LDY #',04,                       ]
+(16,02,         )[ 12*  'ASL ,X','NUMBERL',               ]
+(36,03,         )[      'ROL ,X','NUMBERH',               ]
+(88,            )[      'DEY',                            ]
+(D0,F9,         )[      'BNE',12=&lt;                        ]
+(15,02,         )[      'ORA ,X','NUMBERL',               ]
+(18,            )[      'CLC',                            ]
+(90,AC,         )[      'BCC',02=&lt;                        ]
+                 [ 14=&gt;                                   ]
+(60,            )[ 16=&gt; 'RTS',                            ]
+                 [ (RELDATA)                              ]
+(03,11,00,00,00,)[      (DB) 03, (DW) 0011,, (DW) 'get',, ]
+(00,            )[      (DB) 00,                          ]
+(Q              )[ _                                      ]
+</pre>
+<h1>An extended format</h1>
+<p>The format described above is (intentionally) not specific to the 6502
+family.  Your humble author has developed an "extended" version of this
+format which adds three additional characters to the original format, which
+generate the 8-bit signed displacement for 6502 branches.  (Though this
+feature was designed specifically for the 6502, it could be use with other
+microprocessors that use the same 8-bit signed displacements.)  The three
+additional characters are:</p>
+<ul>
+<li>* set label to address, reset number to 0</li>
+<li>&lt; store backward branch, increment address, reset number to 0</li>
+<li>&gt; store forward branch, reset number to 0</li>
+</ul>
+<p>Here is an example of how these new characters can be used:</p>
+<pre>
+[ calculate checksum ]
+   A9,00, [    LDA #0    ]
+0* 18,    [ .1 CLC       ]
+   61,00, [    ADC (0,X) ]
+   F6,00, [    INC 0,X   ]
+   D0,2*, [    BNE .2    ]
+   F6,01, [    INC 1,X   ]
+2> 88,    [ .2 DEY       ]
+   D0,0<  [    BNE .1    ]
+   60,    [    RTS       ]
+Q
+</pre>
+<h1>How to use the extended format</h1>
+<p>The extended format routine is used in the much the same way as before.
+The "labels" are all stored on a single page, so you must initialize the
+high byte of the label variable (i.e. 5,X) to indicate which page to store
+labels.  Note that labels can be reused.  After the 2> the label 2 is
+available again.  For additional backward branches you can use 0< as many
+times as you like.  Otherwise, you can reuse the label 0 after the last 0<.
+Note that you must use separate labels for multiple forward branches to the
+same destination.  Also note that the routine does not check whether the
+branch is too long.  Use only even labels.</p>
+<h1>Source and object code of the extended format</h1>
+<p>Here is the object code in "bootstrap encoded" form:</p>
+<pre>
+&lt;h&lt;|,h=x|h&lt;xx(hy&lt;x|m=y|m=xlx&lt;xxhx98-l(=yx8l(9,,x&lt;x&lt;xx99)l(m,xx|(
+i=ll=xx9&lt;8|(8x|l&lt;xlm=y|m&lt;ylhx(x9(|l(&lt;m|l&lt;|x9)xl((mx9)ll(&lt;=x9(l|(
+=h8hly&lt;|l-&lt;xhx(hxh|y&lt;xm,&lt;x|(hhm,&lt;ylhll89,hx99x|h9|8y,xx9,9l(=l(9
+xxx9i(|hhx(y9}lx&lt;|=l=x-l=yxx|(h)&lt;m=x8h|h}l,8lm&lt;x|y&lt;|m,&lt;|lm&lt;y|y&lt;|
+lh|}ly&lt;||m=xm,&lt;|ly&lt;||m=y8hlm&lt;xl-=x|y=x(hlhii=y=h&lt;x&lt;x&lt;x&lt;x!
+</pre>
+<p>Here is the source and object code:</p>
+<pre>
+                 [ 10 @ 'BPL'                             ]
+                 [ 20 @ 'JSR'                             ]
+                 [ 30 @ 'BMI'                             ]
+                 [ 60 @ 'RTS'                             ]
+                 [ 90 @ 'BCC'                             ]
+                 [ A0 @ 'LDY #'                           ]
+                 [ B0 @ 'BCS'                             ]
+                 [ D0 @ 'BNE'                             ]
+                 [ F0 @ 'BEQ'                             ]
+                 [ 81 @ 'STA ,X)'                         ]
+                 [ A1 @ 'LDA ,X)'                         ]
+                 [ 94 @ 'STY ,X'                          ]
+                 [ B4 @ 'LDY ,X'                          ]
+                 [ 15 @ 'ORA ,X'                          ]
+                 [ 95 @ 'STA ,X'                          ]
+                 [ B5 @ 'LDA ,X'                          ]
+                 [ F5 @ 'SBC ,X'                          ]
+                 [ 16 @ 'ASL ,X'                          ]
+                 [ 36 @ 'ROL ,X'                          ]
+                 [ F6 @ 'INC ,X'                          ]
+                 [ 18 @ 'CLC'                             ]
+                 [ 38 @ 'SEC'                             ]
+                 [ 88 @ 'DEY'                             ]
+                 [ 98 @ 'TYA'                             ]
+                 [ A8 @ 'TAY'                             ]
+                 [ C8 @ 'INY'                             ]
+                 [ D8 @ 'CLD'                             ]
+                 [ 09 @ 'ORA #'                           ]
+                 [ 29 @ 'AND #'                           ]
+                 [ 49 @ 'EOR #'                           ]
+                 [ 69 @ 'ADC #'                           ]
+                 [ A9 @ 'LDA #'                           ]
+                 [ C9 @ 'CMP #'                           ]
+                 [                                        ]
+                 [ 0000 @ 'get'                           ]
+                 [                                        ]
+                 [ 00 @ 'ADDRESS'                         ]
+                 [ 01 @ 'ADDRESS+1'                       ]
+                 [ 02 @ 'NUMBER'                          ]
+                 [ 03 @ 'NUMBER+1'                        ]
+                 [ 04 @ 'LABELS'                          ]
+                 [                                        ]
+                 [ 1000 @                                 ]
+                 [                                        ]
+(10,04,         )[      'BPL',00*,                        ]
+(30,02,         )[      'BMI',02*,                        ]
+(90,00,         )[      (DW) 0090,, (RELDATA-PROGRAM)     ]
+                 [ 00=&gt;02=&gt;                               ]
+                 [ (PROGRAM)                              ]
+(D8,            )[      'CLD',                            ]
+(A9,00,         )[ 00*  'LDA #',00,                       ]
+(95,03,         )[      'STA ,X','NUMBER+1',              ]
+(95,02,         )[ 02*  'STA ,X','NUMBER',                ]
+(A0,00,         )[ 04*  'LDY #',00,                       ]
+(98,            )[      'TYA',                            ]
+(C9,5D,         )[ 06*  'CMP #',5D,                       ]
+(F0,03,         )[      'BEQ',0A*,                        ]
+(C8,            )[ 08*  'INY',                            ]
+(F0,5E,         )[      'BEQ',18*,                        ]
+(20,00,00,      )[ 0A=&gt; 'JSR','get',,                     ]
+(C9,5B,         )[      'CMP #',5B,                       ]
+(F0,F6,         )[      'BEQ',08=&lt;                        ]
+(88,            )[      'DEY',                            ]
+(D0,EF,         )[      'BNE',06=&lt;                        ]
+(B4,02,         )[      'LDY ,X','NUMBER',                ]
+(C9,40,         )[      'CMP #',40,                       ]
+(D0,08,         )[      'BNE',0C*,                        ]
+(94,00,         )[      'STY ,X','ADDRESS',               ]
+(B5,03,         )[      'LDA ,X','NUMBER+1',              ]
+(95,01,         )[      'STA ,X','ADDRESS+1',             ]
+(B0,D8,         )[      'BCS',00=&lt;                        ]
+(C9,2C,         )[ 0C=&gt; 'CMP #',2C,                       ]
+(F0,15,         )[      'BEQ',0E*,                        ]
+(94,04,         )[      'STY ,X','LABELS',                ]
+(C9,2A,         )[      'CMP #',2A,                       ]
+(F0,3D,         )[      'BEQ',1C*,                        ]
+(C9,3E,         )[      'CMP #',3E,                       ]
+(F0,45,         )[      'BEQ',1E*,                        ]
+(C9,3C,         )[      'CMP #',3C,                       ]
+(D0,12,         )[      'BNE',12*,                        ]
+(18,            )[      'CLC',                            ]
+(A1,04,         )[      'LDA ,X)','LABELS',               ]
+(F5,00,         )[      'SBC ,X','ADDRESS',               ]
+(A8,            )[      'TAY',                            ]
+(38,            )[      'SEC',                            ]
+(98,            )[ 0E=&gt; 'TYA',                            ]
+(81,00,         )[      'STA ,X)','ADDRESS',              ]
+(F6,00,         )[      'INC ,X','ADDRESS',               ]
+(D0,B8,         )[      'BNE',00=&lt;                        ]
+(F6,01,         )[      'INC ,X','ADDRESS+1',             ]
+(B0,B4,         )[ 10*  'BCS',00=&lt;                        ]
+(49,30,         )[ 12=&gt; 'EOR #',30,                       ]
+(C9,0A,         )[      'CMP #',0A,                       ]
+(90,0E,         )[      'BCC',14*,                        ]
+(09,20,         )[      'ORA #',20,                       ]
+(C9,61,         )[      'CMP #',61,                       ]
+(F0,16,         )[      'BEQ',1A*,                        ]
+(69,88,         )[      'ADC #',88,                       ]
+(C9,FA,         )[      'CMP #',FA,                       ]
+(90,A8,         )[      'BCC',04=&lt;                        ]
+(29,0F,         )[      'AND #',0F,                       ]
+(A0,04,         )[ 14=&gt; 'LDY #',04,                       ]
+(16,02,         )[ 16*  'ASL ,X','NUMBER',                ]
+(36,03,         )[      'ROL ,X','NUMBER+1',              ]
+(88,            )[      'DEY',                            ]
+(D0,F9,         )[      'BNE',16=&lt;                        ]
+(15,02,         )[      'ORA ,X','NUMBER',                ]
+(18,            )[      'CLC',                            ]
+(90,96,         )[      'BCC',02=&lt;                        ]
+                 [ 18=&gt;                                   ]
+(60,            )[ 1A=&gt; 'RTS',                            ]
+(B5,00,         )[ 1C=&gt; 'LDA ,X','ADDRESS',               ]
+(81,04,         )[      'STA ,X)','LABELS',               ]
+(F6,04,         )[      'INC ,X','LABELS',                ]
+(B5,01,         )[      'LDA ,X','ADDRESS+1',             ]
+(81,04,         )[      'STA ,X)','LABELS',               ]
+(B0,85,         )[      'BCS',00=&lt;                        ]
+(A1,04,         )[ 1E=&gt; 'LDA ,X)','LABELS',               ]
+(95,02,         )[      'STA ,X','NUMBER',                ]
+(F6,04,         )[      'INC ,X','LABELS',                ]
+(A1,04,         )[      'LDA ,X)','LABELS',               ]
+(95,03,         )[      'STA ,X','NUMBER+1',              ]
+(18,            )[      'CLC',                            ]
+(B5,00,         )[      'LDA ,X','ADDRESS',               ]
+(F5,02,         )[      'SBC ,X','NUMBER',                ]
+(81,02,         )[      'STA ,X)','NUMBER',               ]
+(38,            )[      'SEC',                            ]
+(B0,BB,         )[      'BCS',10=&lt;                        ]
+                 [ (RELDATA)                              ]
+(03,12,00,00,00,)[      (DB) 03, (DW) 0012,, (DW) 'get',, ]
+(00,            )[      (DB) 00,                          ]
+(Q              )[ _                                      ]
+</pre>
+<h1>A footnote regarding checksums</h1>
+<p>Your humble author developed a version of these formats that had
+checksums, where you control what (addresses, data, or both) and how much
+was accumulated in the checksum (e.g. you could have one checksum for one
+section, another checksum for another section, and no checksum for a third
+section, and in addition, you could comment out checksums at your
+convenience.) However, the only time checksums have ever been anything other
+than completely superfluous with the standard hex file formats for your
+humble author was for file type checking, i.e. on those infrequent occasions
+when mistakenly loading a "raw binary" file instead of a (text) "hex" file.
+It seems to your humble author that merely using a "signature" (e.g.
+[Hex File]) at the beginning of the file would fulfill this purpose, and
+that the checksum feature is an unnecessary complication.  Your humble author
+is not trying to be overly critical of the standard formats, but is trying to
+learn from them (what they do well and where there is room for
+improvement).</p>
+</body></html>
+
+<!-- Hosting24 Analytics Code -->
+<script type="text/javascript" src="http://stats.hosting24.com/count.php"></script>
+<!-- End Of Analytics Code -->

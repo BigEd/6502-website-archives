@@ -1,0 +1,35 @@
+<table border='1' cellpadding='2' bgcolor='#FFFFDF' bordercolor='#E8B900' align='center'><tr><td><font face='Arial' size='2' color='#000000'><b>This website was set to be removed for inactivity by <a href='http://www.000webhost.com/'>www.000webhost.com</a>. If you own this website, <a href='http://www.000webhost.com/protect-website'>click here</a> to protect it.</b></font></td></tr></table><br /><html><head><title>Apple II Integer Basic</title></head><body>
+<ul>
+<li><a href="ibparse.lst">Partial disassembly</a> (the parser, and precedence and syntax tables)</a></li>
+<li><a href="ibchart.htm">Syntax table chart</a></li>
+</ul>
+<p>The columns of the syntax table chart are:</p>
+<ol>
+<li>Category number</li>
+<li>Address (within the syntax table)</li>
+<li>Verb token number (used as an index to the precedence and jump tables at $E980, $EA00, and $EA80)</li>
+<li>Precedence</li>
+<li>Address of verb's action (or $FFFF)</li>
+<li>Characters in the syntax table (if any)</li>
+<li>Syntax token(s)</li>
+</ol>
+<p>Syntax tokens:</p>
+<ul>
+<li>00 return with syntax error</li>
+<li>01 parse string literal character (up to closing quote or end of line)</li>
+<li>02 parse REM character (up to end of line)</li>
+<li>03 return sucessfully (no error)</li>
+<li>00+category required</li>
+<li>20+category optional</li>
+<li>40+category end of category</li>
+<li>60+category end of rule</li>
+<li>7E branch "backward" 1 byte</li>
+<li>7F branch "backward" 2 bytes</li>
+</ul>
+<p>sp (space) matches a letter A-Z, ! matches a digit 0-9, and _ matches the
+end of the line.</p>
+</body></html>
+
+<!-- Hosting24 Analytics Code -->
+<script type="text/javascript" src="http://stats.hosting24.com/count.php"></script>
+<!-- End Of Analytics Code -->

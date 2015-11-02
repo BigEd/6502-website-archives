@@ -1,0 +1,483 @@
+<table border='1' cellpadding='2' bgcolor='#FFFFDF' bordercolor='#E8B900' align='center'><tr><td><font face='Arial' size='2' color='#000000'><b>This website was set to be removed for inactivity by <a href='http://www.000webhost.com/'>www.000webhost.com</a>. If you own this website, <a href='http://www.000webhost.com/protect-website'>click here</a> to protect it.</b></font></td></tr></table><br /><html><head><title>6502 software: Relocator</title><style type="text/css">pre { border: solid; padding: 1em }</style></head><body>
+<h1>Introduction</h1>
+<p>The relocation format described here is designed to ease the porting of
+applications from a one 6502-based system (or from a generic 6502 baseline)
+to another 6502-based system.</p>
+<p>The 65816 has instructions like BRL, PER, and PHK, so it possible to write
+code that is position-independent (i.e. it will run at any location) or
+relocates itself (assuming it is loaded into RAM) at initialization.  These
+instructions are not present on either the NMOS 6502 or the 65C02, which is
+where this relocation format comes in.  It can also relocate variable
+addresses (whether on the zero page or not), zero page usage, and allows
+the locations of system dependent routines (e.g. character input, line
+input, character output, etc.) to be specified.</p>
+<p>All that needs to be provided is a table that maps the original addresses
+to the locations of system-dependent routines and available zero page and
+RAM locations.  While it could be used by an OS to load applications, its
+main goal is to handle the bulk of the work involved in porting, and avoid
+converting assembler syntax or installing the assembler originally used by
+the author.  As such, it handles only common cases; rare and/or special
+cases must be ported manually.  In addition, it does not attempt to track or
+enforce any special requirements (e.g. page boundary alignment).  This
+format is intentionally more primitive than the well thought out .o65 file
+format (by Andre Fachat).</p>
+<p>For example, suppose you have a 6502 application you want to try on your
+system.  One of its tables must be aligned on a page boundary.  So you load
+it at such an address.  Then you define the map table so that the code gets
+properly relocated, so that it uses the I/O routine addresses of your system,
+stores its variables in the available RAM of your system, and uses the
+available zero page locations of your system.</p>
+<h1>The relocation format</h1>
+<p>The format consists of a 6-byte header, followed by the program as
+originally assembled, followed by the relocation data.  Note that the
+original program does not need to be modified at all, even it were written
+without this relocation format in mind; only the header and the relocation
+data need to be added.<p>
+<p>The six byte header is (in hex):
+<pre>
+10 04 30 02 LL HH
+</pre>
+<p>LL and HH are the low and high bytes of the length of the program data
+(i.e. the number of bytes between the header and the relocation data).  The
+first four bytes, in addition to providing a "file identification"
+signature, also form BPL and BMI instructions that (in a relocatable
+fashion) skip past the length bytes, regardless of the value of the N flag
+upon entry.  Thus it is not even necessary to strip off the header for
+applications that do not require relocation.  Since the program is in its
+originally assembled form, it was presumably assembled to run on some
+system.  If the memory map it uses is compatible with your system, there are
+no zero page conflicts, and any system-dependent routines are at the same
+addresses, you could just load it, header, relocation data, and all, and
+run it.</p>
+<p>The relocation data consists of any number of relocation entries; each
+entry is one, five, or six bytes.  The format of a relocation entry is:</p>
+<pre>
+DB relocation_type
+DW number_of_bytes_to_advance ; not present if type = 0
+DW address_referenced         ; not present if type = 0
+DB low_byte_of_expression     ; not present if type = 0, 1, or 3
+</pre>
+<p>The relocation types are:</p>
+<ul>
+<li>00 end of data</li>
+<li>01 relocate an 8-bit reference</li>
+<li>02 relocate the high byte of a 16-bit reference</li>
+<li>03 relocate a 16-bit reference</li>
+</ul>
+<p>An 8-bit reference can be either a zero page location, or the low byte of
+a 16-bit address.  It can also handle references in the form of
+address+constant or address-constant.  For example:<p>
+<pre>
+ZP     = $12
+TABLE  = $3480
+OUTPUT = $ABCD
+   ORG $1000
+START
+r1 LDA #TABLE   ; 8-bit reference (low byte of a 16-bit reference)
+r2 STA ZP       ; 8-bit reference
+r3 LDA #>TABLE  ; high byte of a 16-bit reference
+r4 STA ZP+1     ; 8-bit reference
+r5 LDA (ZP),Y   ; 8-bit reference
+r6 LDA #>SUB-1  ; high byte of a 16-bit reference
+   PHA
+r7 LDA #SUB-1   ; 8-bit reference (low byte of a 16-bit reference)
+   PHA
+   RTS
+SUB
+r8 JSR OUTPUT   ; 16-bit reference
+   RTS
+r9 DW  OUTPUT-1 ; 16-bit reference
+END
+</pre>
+<p>Consequently, the header is:</p>
+<pre>
+   DB  $10,$04,$30,$02
+   DW  END-START
+</pre>
+<p>And the relocation data is:</p>
+<pre>
+   DB  1
+   DW  r1+1 - START
+   DW  TABLE
+
+   DB  1
+   DW  r2+1 - r1-1
+   DW  ZP
+
+   DB  2
+   DW  r3+1 - r2-1
+   DW  TABLE
+   DB  TABLE
+
+   DB  1
+   DW  r4+1 - r3-1
+   DW  ZP
+
+   DB  1
+   DW  r5+1 - r4-1
+   DW  ZP
+
+   DB  2
+   DW  r6+1 - r5-1
+   DW  SUB
+   DB  SUB-1
+
+   DB  1
+   DW  r7+1 - r6-1
+   DW  SUB
+
+   DB  3 
+   DW  r8+1 - r7-1
+   DW  OUTPUT
+
+   DB  3
+   DW  r9 - r8-1
+   DW  OUTPUT
+</pre>
+<p>Note that the relocation data contains the reference address, but not the
++/- constant (except for the sixth byte of a type 2 entry).  This allows
+things like:
+<pre>
+MODE   DB  0 ; default value
+OUTPUT RTS
+       DW  MODE,OUTPUT-1
+</pre>
+<p>to be handled properly (where the two addresses in the DW have the same
+value, but they might not be after relocation, if one get relocated to RAM
+and the other to ROM).</p>
+<h1>How to use it</h1>
+<p>The map table is extremely simple.  It consists of any number of entries.
+The format of an entry is:</p>
+<pre>
+DW original_address,new_address
+</pre>
+There are two important requirements.  First, the entries must be in order
+of decreasing original address.  Second, the original address of the last
+entry must be $0000.  For example:
+<pre>
+   DW $F000,$FF00 ; $F000 and above -> $FF00 and above
+   DW $89AB,$1200 ; $89AB and above (up to $F000) -> $1200 and above
+   DW $8000,$1000 ; $8000 and above (up to $89AB) -> $1000 and above
+   DW $0000,$0000 ; everything below $8000 stays at the same address
+</pre>
+<p>Before it can be used, (unless you wish to use it at its assembled
+address), the relocator itself must be relocated, so it has been prefaced
+with a short routine to do just that.  This pre-relocator is very primitive,
+and rather than use a map table, it is relocated to run at the address it is
+loaded at, which means the pre-relocator requires the relocator to be in
+RAM.  However, the relocator can relocate (a copy of) itself, so you can
+reload it and relocate that if you wish to e.g. generate a ROM version.  As
+always, use the X register to specify which zero page locations to use.
+Initialize the first two locations with the address of the pre-relocator
+(important note: not the address of the header of the pre-relocator, i.e.
+the address of the CLD instruction, not the BPL instruction).  The other
+four zero page locations do not need to be initialized.</p>
+<p>To use actual relocator, again use the X register to specify which zero
+page locations to use.  Initialize the first two locations with the address
+of the map table.  Initialize the next two locations with the address of the
+header of the program to be relocated.  The remaining 6 zero page locations
+do not need to be initialized.</p>
+<h1>Features</h1>
+<ul>
+<li>Only the map table needs to be kept in memory</li>
+<li>The program is processed in a single pass, and can be read, then
+processed, and then written one byte at a time (the relocator as provided
+doesn't do this, but it's possible)</li>
+<li>The relocation data is processed in a single pass and can be read one
+byte at a time (again, the relocator as provided doesn't do this, but it's
+possible)</li>
+</ul>
+<h1>Source and object code</h1>
+<pre>
+                 [ 10 @ 'BPL'                                  ]
+                 [ 30 @ 'BMI'                                  ]
+                 [ 60 @ 'RTS'                                  ]
+                 [ 90 @ 'BCC'                                  ]
+                 [ A0 @ 'LDY #'                                ]
+                 [ D0 @ 'BNE'                                  ]
+                 [ 61 @ 'ADC ,X)'                              ]
+                 [ 81 @ 'STA ,X)'                              ]
+                 [ A1 @ 'LDA ,X)'                              ]
+                 [ 75 @ 'ADC ,X'                               ]
+                 [ 95 @ 'STA ,X'                               ]
+                 [ B5 @ 'LDA ,X'                               ]
+                 [ F6 @ 'INC ,X'                               ]
+                 [ 18 @ 'CLC'                                  ]
+                 [ 38 @ 'SEC'                                  ]
+                 [ 88 @ 'DEY'                                  ]
+                 [ D8 @ 'CLD'                                  ]
+                 [ 69 @ 'ADC #'                                ]
+                 [                                             ]
+                 [ 00 @ 'PGMP'                                 ]
+                 [ 01 @ 'PGMP+1'                               ]
+                 [ 02 @ 'RELP'                                 ]
+                 [ 03 @ 'RELP+1'                               ]
+                 [ 04 @ 'PSTL'                                 ]
+                 [ 05 @ 'PSTH'                                 ]
+                 [                                             ]
+                 [ 20 @ 'JSR'                                  ]
+                 [ B0 @ 'BCS'                                  ]
+                 [ F0 @ 'BEQ'                                  ]
+                 [ C1 @ 'CMP ,X)'                              ]
+                 [ E1 @ 'SBC ,X)'                              ]
+                 [ 48 @ 'PHA'                                  ]
+                 [ 68 @ 'PLA'                                  ]
+                 [ 98 @ 'TYA'                                  ]
+                 [ A8 @ 'TAY'                                  ]
+                 [ 49 @ 'EOR #'                                ]
+                 [ A9 @ 'LDA #'                                ]
+                 [ C9 @ 'CMP #'                                ]
+                 [ 4C @ 'JMP'                                  ]
+                 [                                             ]
+                 [ 00 @ 'ML'                                   ]
+                 [ 01 @ 'MH'                                   ]
+                 [ 02 @ 'PP'                                   ]
+                 [ 03 @ 'PP+1'                                 ]
+                 [ 04 @ 'RP'                                   ]
+                 [ 05 @ 'RP+1'                                 ]
+                 [ 06 @ 'AL'                                   ]
+                 [ 07 @ 'AH'                                   ]
+                 [ 08 @ 'MP'                                   ]
+                 [ 09 @ 'MP+1'                                 ]
+                 [                                             ]
+                 [ 7FA7 @                                      ]
+                 [                                             ]
+(10,04,         )[      'BPL',00*,                             ]
+(30,02,         )[      'BMI',02*,                             ]
+(A0,01,         )[      (DW) 01A0,, (PRELDATA-PRELOC)          ]
+                 [ 00=&gt;02=&gt;                                    ]
+                 [ (PRELOC)                                    ]
+(D8,            )[      'CLD',                                 ]
+(18,            )[      'CLC',                                 ]
+(B5,00,         )[      'LDA ,X','PGMP',                       ]
+(69,53,         )[      'ADC #',53, (PROGRAM-PRELOC)           ]
+(95,00,         )[      'STA ,X','PGMP',                       ]
+(90,03,         )[      'BCC',00*,                             ]
+(F6,01,         )[      'INC ,X','PGMP+1',                     ]
+(18,            )[      'CLC',                                 ]
+(B5,00,         )[ 00=&gt; 'LDA ,X','PGMP',                       ]
+(95,04,         )[      'STA ,X','PSTL',                       ]
+(69,F8,         )[      'ADC #',F8, (RELDATA+1-PROGRAM)        ]
+(95,02,         )[      'STA ,X','RELP',                       ]
+(B5,01,         )[      'LDA ,X','PGMP+1',                     ]
+(95,05,         )[      'STA ,X','PSTH',                       ]
+(69,00,         )[      'ADC #',00,                            ]
+(95,03,         )[      'STA ,X','RELP+1',                     ]
+(18,            )[      'CLC',                                 ]
+(A0,11,         )[      'LDY #',11,                            ]
+(A1,02,         )[ 02*  'LDA ,X)','RELP',                      ]
+(75,00,         )[      'ADC ,X','PGMP',                       ]
+(95,00,         )[      'STA ,X','PGMP',                       ]
+(90,03,         )[      'BCC',04*,                             ]
+(F6,01,         )[      'INC ,X','PGMP+1',                     ]
+(18,            )[      'CLC',                                 ]
+(B5,04,         )[ 04=&gt; 'LDA ,X','PSTL',                       ]
+(61,00,         )[      'ADC ,X)','PGMP',                      ]
+(81,00,         )[      'STA ,X)','PGMP',                      ]
+(F6,00,         )[      'INC ,X','PGMP',                       ]
+(D0,02,         )[      'BNE',06*,                             ]
+(F6,01,         )[      'INC ,X','PGMP+1',                     ]
+(B5,05,         )[ 06=&gt; 'LDA ,X','PSTH',                       ]
+(69,00,         )[      'ADC #',00,                            ]
+(81,00,         )[      'STA ,X)','PGMP',                      ]
+(18,            )[      'CLC',                                 ]
+(A9,05,         )[      'LDA #',05,                            ]
+(75,02,         )[      'ADC ,X','RELP',                       ]
+(95,02,         )[      'STA ,X','RELP',                       ]
+(90,02,         )[      'BCC',08*,                             ]
+(F6,03,         )[      'INC ,X','RELP+1',                     ]
+(38,            )[ 08=&gt; 'SEC',                                 ]
+(88,            )[      'DEY',                                 ]
+(D0,D4,         )[      'BNE',02=&lt;                             ]
+(60,            )[      'RTS',                                 ]
+                 [                                             ]
+(10,04,         )[      'BPL',00*,                             ]
+(30,02,         )[      'BMI',02*,                             ]
+(F7,00,         )[      (DW) 00F7,, (RELDATA-PROGRAM)          ]
+                 [ 00=&gt;02=&gt;                                    ]
+                 [ (PROGRAM)                                   ]
+(D8,            )[      'CLD',                                 ]
+(20,E6,80,      )[      'JSR','HEADER1 ',,                     ]
+(20,ED,80,      )[      'JSR','HEADER2 ',,                     ]
+(20,73,80,      )[      'JSR','ADJMAP ',,                      ]
+(18,            )[      'CLC',                                 ]
+(90,0E,         )[      'BCC',04*,                             ]
+(20,22,80,      )[ 00*  'JSR',06*,,                            ]
+(F6,08,         )[      'INC ,X','MP',                         ]
+(D0,02,         )[      'BNE',02*,                             ]
+(F6,09,         )[      'INC ,X','MP+1',                       ]
+(A1,08,         )[ 02=&gt; 'LDA ,X)','MP',                        ]
+(20,AF,80,      )[      'JSR','ADDP 1',,                       ]
+(20,C7,80,      )[ 04=&gt; 'JSR','GETR 1',,                       ]
+(A8,            )[      'TAY',                                 ]
+(D0,EC,         )[      'BNE',00=&lt;                             ]
+(60,            )[      'RTS',                                 ]
+                 [ 'relocate'                                  ]
+(48,            )[ 06=;;'PHA',                                 ]
+(20,C7,80,      )[      'JSR','GETR 2',,                       ]
+(A8,            )[      'TAY',                                 ]
+(20,C7,80,      )[      'JSR','GETR 3',,                       ]
+(20,BA,80,      )[      'JSR','SEEKP ',,                       ]
+(20,C7,80,      )[      'JSR','GETR 4',,                       ]
+(95,06,         )[      'STA ,X','AL',                         ]
+(20,C7,80,      )[      'JSR','GETR 5',,                       ]
+(95,07,         )[      'STA ,X','AH',                         ]
+                 [ (FIND)                                      ]
+(B5,01,         )[      'LDA ,X','MH',                         ]
+(95,09,         )[      'STA ,X','MP+1',                       ]
+(B5,00,         )[      'LDA ,X','ML',                         ]
+(95,08,         )[ 00*  'STA ,X','MP',                         ]
+(B5,06,         )[      'LDA ,X','AL',                         ]
+(C1,08,         )[      'CMP ,X)','MP',                        ]
+(F6,08,         )[      'INC ,X','MP',                         ]
+(D0,02,         )[      'BNE',02*,                             ]
+(F6,09,         )[      'INC ,X','MP+1',                       ]
+(B5,07,         )[ 02=&gt; 'LDA ,X','AH',                         ]
+(E1,08,         )[      'SBC ,X)','MP',                        ]
+(B0,0A,         )[      'BCS',04*,                             ]
+(A9,03,         )[      'LDA #',03,                            ]
+(75,08,         )[      'ADC ,X','MP',                         ]
+(90,E8,         )[      'BCC',00=&lt;                             ]
+(F6,09,         )[      'INC ,X','MP+1',                       ]
+(B0,E4,         )[      'BCS',00=&lt;                             ]
+                 [ 04=&gt;                                        ]
+                 [ (ADJREF)                                    ]
+(68,            )[      'PLA',                                 ]
+(C9,82,         )[      'CMP #',82,                            ]
+(10,0F,         )[      'BPL','REL8',                          ]
+(F6,08,         )[      'INC ,X','MP',                         ]
+(D0,02,         )[      'BNE',00*,                             ]
+(F6,09,         )[      'INC ,X','MP+1',                       ]
+(49,02,         )[ 00=&gt; 'EOR #',02,                            ]
+(D0,06,         )[      'BNE','REL16',                         ]
+                 [ (RELH)                                      ]
+(20,C7,80,      )[      'JSR','GETR 6',,                       ]
+(61,08,         )[      'ADC ,X)','MP',                        ]
+                 [ 'REL8'&gt;                                     ]
+(60,            )[      'RTS',                                 ]
+                 [ 'REL16'&gt;                                    ]
+(A1,08,         )[      'LDA ,X)','MP',                        ]
+(4C,AF,80,      )[      'JMP','ADDP 2',,                       ]
+                 [ 'ADJMAP ';;                                 ]
+                 [ 'ADJMAP'                                    ]
+(B5,00,         )[      'LDA ,X','ML',                         ]
+(95,08,         )[      'STA ,X','MP',                         ]
+(B5,01,         )[      'LDA ,X','MH',                         ]
+(95,09,         )[      'STA ,X','MP+1',                       ]
+(A1,08,         )[ 00*  'LDA ,X)','MP',                        ]
+(F6,08,         )[      'INC ,X','MP',                         ]
+(D0,02,         )[      'BNE',02*,                             ]
+(F6,09,         )[      'INC ,X','MP+1',                       ]
+(A8,            )[ 02=&gt; 'TAY',                                 ]
+(A1,08,         )[      'LDA ,X)','MP',                        ]
+(F6,08,         )[      'INC ,X','MP',                         ]
+(D0,02,         )[      'BNE',04*,                             ]
+(F6,09,         )[      'INC ,X','MP+1',                       ]
+(48,            )[ 04=&gt; 'PHA',                                 ]
+(38,            )[      'SEC',                                 ]
+(98,            )[      'TYA',                                 ]
+(49,FF,         )[      'EOR #',FF,                            ]
+(61,08,         )[      'ADC ,X)','MP',                        ]
+(81,08,         )[      'STA ,X)','MP',                        ]
+(F6,08,         )[      'INC ,X','MP',                         ]
+(D0,02,         )[      'BNE',06*,                             ]
+(F6,09,         )[      'INC ,X','MP+1',                       ]
+(68,            )[ 06=&gt; 'PLA',                                 ]
+(F0,01,         )[      'BEQ',08*,                             ]
+(A8,            )[      'TAY',                                 ]
+(49,FF,         )[ 08=&gt; 'EOR #',FF,                            ]
+(61,08,         )[      'ADC ,X)','MP',                        ]
+(81,08,         )[      'STA ,X)','MP',                        ]
+(F6,08,         )[      'INC ,X','MP',                         ]
+(D0,02,         )[      'BNE',0A*,                             ]
+(F6,09,         )[      'INC ,X','MP+1',                       ]
+(98,            )[ 0A=&gt; 'TYA',                                 ]
+(D0,CD,         )[      'BNE',00=&lt;                             ]
+(60,            )[      'RTS',                                 ]
+                 [ 'ADDP 1';;                                  ]
+                 [ 'ADDP 2';;                                  ]
+                 [ 'ADDP'                                      ]
+(61,02,         )[      'ADC ,X)','PP',                        ]
+(81,02,         )[      'STA ,X)','PP',                        ]
+(F6,02,         )[      'INC ,X','PP',                         ]
+(D0,02,         )[      'BNE',00*,                             ]
+(F6,03,         )[      'INC ,X','PP+1',                       ]
+(60,            )[ 00=&gt; 'RTS',                                 ]
+                 [ 'SEEKP ';;                                  ]
+                 [ 'SEEKP'                                     ]
+(18,            )[      'CLC',                                 ]
+(48,            )[      'PHA',                                 ]
+(98,            )[      'TYA',                                 ]
+(75,02,         )[      'ADC ,X','PP',                         ]
+(95,02,         )[      'STA ,X','PP',                         ]
+(68,            )[      'PLA',                                 ]
+(75,03,         )[      'ADC ,X','PP+1',                       ]
+(95,03,         )[      'STA ,X','PP+1',                       ]
+(60,            )[      'RTS',                                 ]
+                 [ 'GETR 1';;                                  ]
+                 [ 'GETR 2';;                                  ]
+                 [ 'GETR 3';;                                  ]
+                 [ 'GETR 4';;                                  ]
+                 [ 'GETR 5';;                                  ]
+                 [ 'GETR 6';;                                  ]
+                 [ 'GETR'                                      ]
+(A1,04,         )[      'LDA ,X)','RP',                        ]
+(F6,04,         )[      'INC ,X','RP',                         ]
+(D0,02,         )[      'BNE',00*,                             ]
+(F6,05,         )[      'INC ,X','RP+1',                       ]
+(60,            )[ 00=&gt; 'RTS',                                 ]
+                 [ 'GETP'                                      ]
+(A1,02,         )[      'LDA ,X)','PP',                        ]
+(F6,02,         )[      'INC ,X','PP',                         ]
+(D0,02,         )[      'BNE',00*,                             ]
+(F6,03,         )[      'INC ,X','PP+1',                       ]
+(60,            )[ 00=&gt; 'RTS',                                 ]
+                 [ 'SEEKR'                                     ]
+(18,            )[      'CLC',                                 ]
+(48,            )[      'PHA',                                 ]
+(98,            )[      'TYA',                                 ]
+(75,02,         )[      'ADC ,X','PP',                         ]
+(95,04,         )[      'STA ,X','RP',                         ]
+(68,            )[      'PLA',                                 ]
+(75,03,         )[      'ADC ,X','PP+1',                       ]
+(95,05,         )[      'STA ,X','RP+1',                       ]
+(60,            )[      'RTS',                                 ]
+                 [ 'HEADER1 ';;                                ]
+                 [ 'HEADER1'                                   ]
+(A0,04,         )[      'LDY #',04,                            ]
+(A9,00,         )[      'LDA #',00,                            ]
+(4C,BA,80,      )[      'JMP','SEEKP',,                        ]
+                 [ 'HEADER2 ';;                                ]
+                 [ 'HEADER2'                                   ]
+(20,D0,80,      )[      'JSR','GETP',,                         ]
+(A8,            )[      'TAY',                                 ]
+(20,D0,80,      )[      'JSR','GETP',,                         ]
+(4C,D9,80,      )[      'JMP','SEEKR',,                        ]
+                 [ (RELDATA)                                   ]
+(03,02,00,E6,80,)[      (DB) 03, (DW) 0002,, (DW) 'HEADER1',,  ]
+(03,01,00,ED,80,)[      (DB) 03, (DW) 0001,, (DW) 'HEADER2',,  ]
+(03,01,00,73,80,)[      (DB) 03, (DW) 0001,, (DW) 'ADJMAP',,   ]
+(03,04,00,22,80,)[      (DB) 03, (DW) 0004,, (DW) 'relocate',, ]
+(03,09,00,AF,80,)[      (DB) 03, (DW) 0009,, (DW) 'ADDP',,     ]
+(03,01,00,C7,80,)[      (DB) 03, (DW) 0001,, (DW) 'GETR',,     ]
+(03,06,00,C7,80,)[      (DB) 03, (DW) 0006,, (DW) 'GETR',,     ]
+(03,02,00,C7,80,)[      (DB) 03, (DW) 0002,, (DW) 'GETR',,     ]
+(03,01,00,BA,80,)[      (DB) 03, (DW) 0001,, (DW) 'SEEKP',,    ]
+(03,01,00,C7,80,)[      (DB) 03, (DW) 0001,, (DW) 'GETR',,     ]
+(03,03,00,C7,80,)[      (DB) 03, (DW) 0003,, (DW) 'GETR',,     ]
+(03,34,00,C7,80,)[      (DB) 03, (DW) 0034,, (DW) 'GETR',,     ]
+(03,06,00,AF,80,)[      (DB) 03, (DW) 0006,, (DW) 'ADDP',,     ]
+(03,78,00,BA,80,)[      (DB) 03, (DW) 0078,, (DW) 'SEEKP',,    ]
+(03,01,00,D0,80,)[      (DB) 03, (DW) 0001,, (DW) 'GETP',,     ]
+(03,02,00,D0,80,)[      (DB) 03, (DW) 0002,, (DW) 'GETP',,     ]
+(03,01,00,D9,80,)[      (DB) 03, (DW) 0001,, (DW) 'SEEKR',,    ]
+(00,            )[      (DB) 00,                               ]
+                 [ (PRELDATA)                                  ]
+(00,            )[      (DB) 00,                               ]
+(Q              )[ _                                           ]
+</pre>
+</body></html>
+
+<!-- Hosting24 Analytics Code -->
+<script type="text/javascript" src="http://stats.hosting24.com/count.php"></script>
+<!-- End Of Analytics Code -->

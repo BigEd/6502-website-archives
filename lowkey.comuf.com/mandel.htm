@@ -1,0 +1,226 @@
+<table border='1' cellpadding='2' bgcolor='#FFFFDF' bordercolor='#E8B900' align='center'><tr><td><font face='Arial' size='2' color='#000000'><b>This website was set to be removed for inactivity by <a href='http://www.000webhost.com/'>www.000webhost.com</a>. If you own this website, <a href='http://www.000webhost.com/protect-website'>click here</a> to protect it.</b></font></td></tr></table><br /><html><head><title>Mandelbrot and fixed-point routines</title></head><body>
+<h1>Source code</h1>
+<ul>
+<li><a href="MANDEL.ASM">Source code for the 65C816</a> (assemble with HXA)</li>
+</ul>
+<h1>Description</h1>
+<p>These routines generate Mandelbrot images and are based on Bob Bishop's
+routines that appeared in the August 1987 issue of Call-A.P.P.L.E. (A scan
+of this article can be found
+<a href="http://bob-bishop.awardspace.com/Mandelbrot/index.html">here</a>.)
+The assembly has been updated for the 65C816 and uses 16-bit data. In
+addition, the (Applesoft) BASIC program has been recoded in assembly.</p>
+<p>To replace the (floating point) calculations from the BASIC program,
+there is a small library of fixed-point arithmetic routines, described
+below. This library is completely independent of the Mandelbrot generating
+routines, and has been grouped together in the source code, so that it can
+be easily extracted for other uses.</p>
+<h1>Installation</h1>
+<p>You will need to supply a few system-specific routines:<p>
+<ul>
+<li>INPUT: wait for the user to press a key, return its ASCII value in the
+accumulator (remember to clear the upper 8 bits of the accumulator)</li>
+<li>OUTPUT: output the character in the accumulator</li>
+<li>OUTCRLF: output a CRLF or whatever the appropriate sequence is for your
+system</li>
+<li>PLOTBEGIN: perform whatever initialization is needed before rendering
+(e.g. clearing the screen)</li>
+<li>PLOT: plot the point whose coordinates are in the X and Y registers and
+whose color is in the accumulator</li>
+<li>PLOTEND: perform whatever final clean-up is needed after rendering</li>
+<li>START_TIMER and STOP_TIMER: capture the starting and ending times of
+the image generation. If you are not interested in measuring the execution
+time, these routines can simply be an RTS</li>
+</ul>
+<p>All routines should preserve registers (unless, of course, they return a
+value in a register). (This is recommended, even though it isn't strictly
+necessary in all cases, e.g. you should be able to get away with not
+preserving the accumulator in OUTPUT, but OUTCRLF must preserve the
+accumulator.)</p>
+<p>Unlike the original program, calculating the Mandelbrot data and
+displaying the results are now separate passes. The idea is that you can
+generate the data once (that's the slow part), but color the same data in
+different ways to produce interesting images (which is quick). This means
+that the data generated is now stored in RAM, rather than immediately
+calling a plot routine, so you will also need to make sure that IMAGEBUF has
+enough space to hold all the data you generate, i.e. 16 bits * NX pixels *
+NY pixels / 8 bits per byte. 4096 bytes is enough to generate Figure 2 (16 *
+40 * 48 / 8 = 3840 &lt; 4096), but you will need more if you generate higher
+resolution pictures.</p>
+<p>In the original lo-res BASIC program (Listing 4), 7 colors were used
+(black and 6 rainbow colors: red, orange, yellow, green, blue, and purple);
+if you wish to use more colors or select colors in a different fashion,
+you can create your own custom GETCOLOR routine.</p>
+<p>Included in the source code are the system-specific routines I used on
+the Apple IIgs, which you can use on an emulator (assuming there is one out
+there that is complete enough) or an actual Apple IIgs (Apple II forever!).
+A2STARTIMER and A2STOPTIMER make a ReadAsciiTime call to the Apple IIgs
+toolbox, and the remaining routines use the I/O and lo-res ROM routines from
+the earliest days of the Apple II. If you use your own routines, these
+routines (and A2TIMERBUF) can of course be discarded.</p>
+<h2>Apple IIgs routines</h2>
+<p>A2MAIN sets up the e flag and the D register. CALLE is a sneaky piece of
+code, and is one example of my philosophy of "put all the ugliness in one
+spot when possible". It executes the code that follows the JSR CALLE in
+emulation mode, i.e. this:</p>
+<pre>
+   JSR CALLE
+   JMP $FD8E
+</pre>
+<p>is more or less equivalent to this:</p>
+<pre>
+   JSR save_registers_and_flags_and_enter_emulation_mode
+   JSR $FD8E
+   JSR restore_registers_and_flags
+   RTS
+</pre>
+<p>CALLEA is similar, except it clears the high byte of the accumulator
+rather than saving the accumulator, and is used when the routine needs to
+return its result in the accumulator.</p>
+<p>A2TIMEROUT outputs the start and stop times; it expects to be called from
+emulation mode. It is not called by the Mandelbrot program.</p>
+<h1>Using it</h1>
+<p>Like the original program, you will be prompted for the X and Y
+coordinates and the magnification; in addition (unlike the original
+program), you will be prompted for the timeout value.</p>
+<p>There is some error checking on the input, which is intended to catch
+most of the common and obvious errors, but the error checking is not
+completely thorough. For example, it doesn't prevent you from entering
+negative magnifications. Also, entering .1. does not produce an error (it's
+the same as entering 0.1) because keeping the parser implementation simple
+was a higher priority that being completely strict about valid input.</p>
+<p>The aspect ratio is currently 1.53. In Figure 2 from the article, notice
+that the lo-res "bricks" are rectangular, not square. In fact, they are
+1.53 times wider than they are tall. Once you get the code working, you
+should modify the aspect ratio to match your display. (On most modern
+displays, the aspect ratio is 1, i.e. if you draw a box 100 pixels wide by
+100 pixels high, it will look square, not rectangular.) As with the BASIC
+program, NX and NY are the width and height (in pixels, in both cases).</p>
+<p>To make sure that you have the code working correctly, it is strongly
+recommended that you use the same parameters as Figure 2 (including the
+aspect ratio), since this won't take too long (about 4 minutes on a 2.8 MHz
+Apple IIgs) to finish. In addition, you may want to have PLOT draw bricks
+whose width to height ratio is 8:5.</p>
+<h1>Differences from Bishop's routines</h1>
+<p>When I generated Figure 2 using the 65C816 program (since the bricks in
+this image are 1.6 times wider than they are tall, the correct aspect ratio
+is 1.6, but I used 1.53 to match what the article used), this is what I
+got:</p>
+<p><a href="figure2.png"><img src="figure2.png"></a></p>
+<p>If you look carefully, you will see that the generated figure is not
+exactly the same as Figure 2 from the article (it can be a little tricky to
+see this, since the magazine picture is black and white). There are several
+reasons for this.</p>
+<p>First, the multiplications produce more accurate results than the
+original program. A 32-bit number times a 32-bit number yields a 64-bit
+result, though we only keep 32 bits of the 64-bit result. To keep the this
+example simple, lets consider numbers with two decimal places, specifically
+1.15 * 1.35.</p>
+<pre>
+  1.15
+* 1.35
+  ------
+  1.15
+   .345
+   .0575
+  ------
+  1.5525
+</pre>
+<p>The result, to two decimal places, is 1.55. Bishop's routine (in effect)
+truncates the partial products before summing them (to produce the final
+result), i.e.:</p>
+<pre>
+
+  1.15
+* 1.35
+  ----
+  1.15
+   .34
+   .05
+  ----
+  1.54
+</pre>
+<p>As you can see, the result is slightly different (and slightly
+inaccurate).</p>
+<p>Second, unlike the original routines, the results are rounded.</p>
+<p>Third, in the original routine, the LSB of the 2 * ZREAL * ZIMAG
+calculation is always 0, since the 32-bit result (of ZREAL * ZIMAG) is
+generated before shifting (i.e. multiplying by 2). In the 65C816 routine, we
+haven't yet, in effect, discarded 32 bits of the 64-bit result before
+multiplying by 2 (and rounding).</p>
+<p>Fourth, numbers use two's complement representation rather than ones'
+complement which gives slightly more accurate results when an addition or
+subtraction changes sign, e.g. consider -0.5 + 1, which originally was
+$FF7FFFFF + $01000000 = $007FFFFF which is slightly less than 0.5. In the
+65C816 routines it will be $FF800000 + $01000000 = $00800000 which is
+exactly 0.5.</p>
+<p>Fifth, and finally, the resolution of DX and DY are slightly less than
+they used to be. (In the assembly program, DX and DY are multiples of
+2^-24, whereas in the BASIC program DX and/or DY could be e.g. 3 * 2^-25.)
+This is sort of like the difference between a magnification of 1000 and
+1001; generally, it's not really a significant difference.</p>
+<p>There are also a few optimizations, though these don't produce different
+results.</p>
+<p>First, the absolute values of ZREAL and ZIMAG and the sign of ZREAL *
+ZIMAG are computed at the beginning of the MANDEL loop, rather than at the
+beginning of each call to MULT. (There is no need to check the signs of
+ZREAL ^ 2 and ZIMAG ^2 as MULT does, since they must be positive.)</p>
+<p>Second, rather than negating 2 * ZREAL * ZIMAG (when the sign is
+negative), we simply check its sign and either add it to or subtract it
+from CIMAG accordingly.</p>
+<p>Third, addition and subtraction loops (e.g. LOOP4 of Listing 1) have been
+unrolled.</p>
+<p>Fourth, and finally, to avoid copying values to and from MULT registers
+(e.g. LOOP1 and LOOP2 of Listing 1), MULT is no longer a separate
+subroutine; instead it is used inline, with slight differences in each
+instance to get its arguments and put its result directly in the appropriate
+place.</p>
+<h1>Fixed-point routines</h1>
+<p>These routines deal with fixed-point numbers that are 64 bits wide; 32
+bits of integer and 32 bits of fraction. If N is a 64-bit integer that can
+range from 0 to (2^64)-1 (unsigned) or -(2^63) to (2^63)-1 (signed), then
+the corresponding fixed-point number is N / (2^32).</p>
+<p>These routines pass and return parameters on a RAM (data) stack. SFL,
+SFH, SIL, and SIH are the Low and High (16-bit) words of the Fractional and
+Integer portions of the number. I have used Forth-style stack effect
+diagrams to describe the stack effect of these routines. If you are not
+familar with this notation, the part between ( and -- shows the affected (or
+used) contents of the stack before the routine is called, and the part
+between -- and ) shows the stack contents after the routine returns; the
+rightmost item is the top of the stack. Example: the stack effect diagram
+( a b c -- a+1 d ) shows a routine that takes 3 parameters: a, b, and c (c is
+on the top of the stack), and returns a+1 and d (d is the on the top of the
+stack). In the diagrams below, "a" and "b" are numbers on the (data) stack,
+and "A" is the accumulator.</p>
+<p>In my experience, most applications that use fixed-point (or floating
+point) math only need a few fixed-point variables. (Case in point: there
+are only 4 fixed-point variables in the Mandelbrot routines.) So rather
+than passing in the full address of the variable, it's often more convenient
+to simply pass in an offset (to FPVARS), and access variables with FPVARS,Y
+(or FPVARS,X) addressing. This is how variables have been implemented
+here.</p>
+<p>The routines are:</p>
+<ul>
+<li>FPADD ( a b -- a+b ): add the top two numbers on the stack</li>
+<li>FPDUP ( a -- a a ): duplicate the top of the stack</li>
+<li>FPFETCH ( -- a ): push the contents of the variable at offset A onto the stack</li>
+<li>FPMUL10 ( a -- a*10 ): multiply the top of the stack by 10</li>
+<li>FPMUL2 ( a -- a*2 ): multiply the top of the stack by 2</li>
+<li>FPMUL65536 ( a -- a*65536 ): multiply the top of the stack by 65536</li>
+<li>FPNEG ( a -- -a ): negate the top of the stack</li>
+<li>FPPULL ( a -- ): pull the top number off the stack and store the low word of its integer portion of in A</li>
+<li>FPPUSH ( -- a ): push the (unsigned) integer in A onto the stack</li>
+<li>FPPWR10 ( -- 10^A ): raise 10 to the power of A</li>
+<li>FPROUNDUP ( a -- a+carry*2^-32 ): if the carry is set, round the top of the stack up</li>
+<li>FPSETSTACKSIZE: set the FP (data) stack size (i.e. initialize the FP stack pointer)</li>
+<li>FPSTORE ( a -- ): store the top of the stack in the variable at offset A</li>
+<li>FPSUB ( a b -- a-b ): subtract the top two items on the stack</li>
+<li>FPUDIV ( a b -- a/b ): divide (unsigned) the top two items on the stack</li>
+<li>FPUDIV2 ( a -- a/2 ): divide (unsigned) the top of the stack by 2</li>
+<li>FPUMUL ( a b -- a*b ): multiply (unsigned) the top two items on the stack</li>
+</ul>
+</body></html>
+
+<!-- Hosting24 Analytics Code -->
+<script type="text/javascript" src="http://stats.hosting24.com/count.php"></script>
+<!-- End Of Analytics Code -->
